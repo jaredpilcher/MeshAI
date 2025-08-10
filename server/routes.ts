@@ -16,6 +16,15 @@ const CURATED_MODELS: HFModel[] = [
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
+  // Add comprehensive request logging for debugging model file loading
+  app.use((req, res, next) => {
+    // Log ALL model-related requests to debug routing issues
+    if (req.originalUrl.startsWith("/models") || req.originalUrl.includes("tinyllama") || req.originalUrl.includes("Xenova")) {
+      console.log(`🌐 MODEL REQUEST: ${req.method} ${req.originalUrl}`);
+    }
+    next();
+  });
+
   // Health check
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });

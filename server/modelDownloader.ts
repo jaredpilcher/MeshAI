@@ -106,7 +106,7 @@ export class ModelDownloaderService {
         throw new Error(`Failed to download ${filename}: ${response.statusText}`);
       }
 
-      const buffer = await response.buffer();
+      const buffer = Buffer.from(await response.arrayBuffer());
       const contentType = response.headers.get('content-type') || 'application/octet-stream';
 
       await this.objectStorage.uploadBuffer(buffer, storagePath, contentType);

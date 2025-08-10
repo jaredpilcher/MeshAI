@@ -15,12 +15,13 @@ const CURATED_MODELS: HFModel[] = [
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
+  const objectStorageService = new ObjectStorageService();
 
   // Add comprehensive request logging for debugging model file loading
   app.use((req, res, next) => {
-    // Log ALL model-related requests to debug routing issues
-    if (req.originalUrl.startsWith("/models") || req.originalUrl.includes("tinyllama") || req.originalUrl.includes("Xenova")) {
-      console.log(`🌐 MODEL REQUEST: ${req.method} ${req.originalUrl}`);
+    // Log ALL requests to debug what's happening
+    if (!req.originalUrl.startsWith("/api/ice") && !req.originalUrl.includes("vite") && !req.originalUrl.includes("@")) {
+      console.log(`🌐 REQUEST: ${req.method} ${req.originalUrl}`);
     }
     next();
   });
@@ -76,9 +77,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create object storage service instance
-  const objectStorage = new ObjectStorageService();
-
   // Model serving routes - serve models from our storage to bypass network restrictions
   app.get("/models/*", async (req, res) => {
     try {
@@ -89,14 +87,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`📂 Full URL: ${req.originalUrl}`);
       
       // Find the file in our model storage
-      const file = await objectStorage.searchModelFile(`models/${fullPath}`);
+      const file = await objectStorageService.searchModelFile(`models/${fullPath}`);
       if (!file) {
         console.log(`❌ File not found: models/${fullPath}`);
         return res.status(404).json({ error: "Model file not found" });
       }
       
       console.log(`✅ File found, serving: ${file.name}`);
-      await objectStorage.downloadFile(file, res);
+      await objectStorageService.downloadFile(file, res);
     } catch (error) {
       console.error("❌ Error serving model file:", error);
       if (error instanceof ObjectNotFoundError) {
@@ -151,6 +149,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error checking model status:", error);
       res.status(500).json({ error: "Failed to check model status" });
+    }
+  });
+
+  // Model files listing endpoint for debugging
+  app.get("/api/models/:modelId/files", async (req, res) => {
+    try {
+      const modelId = req.params.modelId;
+      console.log(`📁 Listing files for model: ${modelId}`);
+      
+      const files = await objectStorageService.listModelFiles(`models/${modelId}`);
+      console.log(`📁 Found files:`, files.map(f => f.name));
+      
+      res.json({ 
+        modelId, 
+        files: files.map(f => ({
+          name: f.name.split('/').pop(),
+          path: f.name,
+          size: f.metadata?.size || 0
+        }))
+      });
+    } catch (error) {
+      console.error("Error listing model files:", error);
+      res.status(500).json({ error: "Failed to list model files" });
     }
   });
 

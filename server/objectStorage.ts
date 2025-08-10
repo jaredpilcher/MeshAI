@@ -86,6 +86,28 @@ export class ObjectStorageService {
     return null;
   }
 
+  // List all files for a given model directory
+  async listModelFiles(modelPath: string): Promise<File[]> {
+    const privateDir = process.env.PRIVATE_OBJECT_DIR || "";
+    if (!privateDir) {
+      return [];
+    }
+
+    const fullPath = `${privateDir}/${modelPath}`;
+    const { bucketName, objectName } = parseObjectPath(fullPath);
+    const bucket = objectStorageClient.bucket(bucketName);
+
+    try {
+      const [files] = await bucket.getFiles({
+        prefix: objectName,
+      });
+      return files.filter(file => !file.name.endsWith('/'));
+    } catch (error) {
+      console.error(`Error listing files for ${modelPath}:`, error);
+      return [];
+    }
+  }
+
   // Downloads a file to the response with proper headers
   async downloadFile(file: File, res: Response, cacheTtlSec: number = 3600) {
     try {

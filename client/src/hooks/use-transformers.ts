@@ -71,20 +71,7 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
         stack: error?.stack,
         cause: error?.cause
       });
-      // Check if this is actually a successful fallback mode
-      const workerStatus = worker.getStatus();
-      if (workerStatus.mode === 'DEMO_FALLBACK' && workerStatus.hasModel) {
-        console.log('Model loaded successfully in fallback demo mode');
-        setCurrentModel({
-          name: workerStatus.modelName || model.name,
-          repo_id: model.repo_id,
-          task: 'text-generation',
-          mode: 'DEMO_FALLBACK'
-        });
-        setModelStatus(`${workerStatus.modelName || model.name} (Demo Mode)`);
-        onLog?.('model', `Model loaded in demo mode: ${workerStatus.modelName || model.name}`);
-        return; // Success in demo mode
-      }
+      // No fallback mode - if loading fails, it fails completely
       
       const errorMessage = error?.message || `Failed to load model: ${error}`;
       console.error('Setting error message:', errorMessage);
@@ -137,15 +124,9 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
     } catch (error: any) {
       console.error('AI inference error:', error);
       
-      // Check if we're in demo mode and provide appropriate messaging
-      const workerStatus = worker.getStatus();
-      if (workerStatus.mode === 'DEMO_FALLBACK') {
-        onLog?.('info', 'Demo mode: Simulating AI response generation');
-        onToken?.('Demo response: This is a simulated AI response showing how the mesh network would distribute real inference tasks. The WebRTC connections and mesh architecture are fully functional.', messageId);
-      } else {
-        onLog?.('error', `AI inference failed: ${error.message || String(error)}`);
-        onToken?.('Error: AI inference failed. Please try again or reload the model.', messageId);
-      }
+      // Real AI inference failed
+      onLog?.('error', `AI inference failed: ${error.message || String(error)}`);
+      onToken?.('Error: AI inference failed. Please try again or reload the model.', messageId);
       onGenerationComplete?.(messageId);
     } finally {
       setIsGenerating(false);

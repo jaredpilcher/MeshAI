@@ -1,8 +1,6 @@
 import { pipeline, env } from '@huggingface/transformers';
-import { testTransformersBasic } from './transformers-test';
-import { MeshDemoFallback } from './mesh-demo-fallback';
 import { downloadVerifier } from './download-verification';
-import { proveModelDownloadIssue, testTransformersModelLoading } from './simple-model-test';
+import { proveModelDownloadIssue } from './simple-model-test';
 
 // Configure transformers.js for browser-based inference
 env.allowRemoteModels = true;
@@ -14,23 +12,9 @@ export class TransformersWorker {
   private generator: any = null;
   private currentModel: any = null;
   private isLoading = false;
-  private fallbackMode = false;
-  private fallbackWorker: MeshDemoFallback | null = null;
 
   constructor() {
-    console.log('TransformersWorker initialized with real transformers.js');
-    
-    // Run basic test on initialization
-    testTransformersBasic().then(result => {
-      console.log('Basic transformers test result:', result);
-      if (!result.success && result.diagnosis === 'NETWORK_RESTRICTED') {
-        console.warn('⚠️  IMPORTANT: HuggingFace model downloading is blocked in this environment');
-        console.warn('⚠️  Real browser-based AI inference is not possible due to network restrictions');
-        console.warn('⚠️  This is a limitation of the current hosting environment, not the code');
-      }
-    }).catch(error => {
-      console.error('Basic transformers test error:', error);
-    });
+    console.log('TransformersWorker initialized for real browser-based AI inference');
   }
 
   async loadModel(model: any): Promise<void> {
@@ -47,24 +31,12 @@ export class TransformersWorker {
       
       // Run definitive proof test first
       const proofResult = await proveModelDownloadIssue();
-      console.log('🔍 DIRECT PROOF TEST RESULT:', proofResult);
+      console.log('Direct proof test result:', proofResult);
       
       if (!proofResult.success) {
-        console.error('🚨 DEFINITIVE PROOF: Model downloading is BLOCKED');
-        console.error('🚨 Evidence:', proofResult.evidence);
-        console.error('🚨 Switching to demo fallback mode immediately');
-        
-        // Switch to fallback mode
-        this.fallbackMode = true;
-        this.fallbackWorker = new MeshDemoFallback();
-        await this.fallbackWorker.loadModel(model);
-        this.currentModel = {
-          ...this.fallbackWorker.getStatus(),
-          repo_id: model.repo_id,
-          name: model.name
-        };
-        console.log('✅ Demo fallback mode activated successfully');
-        return;
+        console.error('Model downloading is blocked in this environment');
+        console.error('Evidence:', proofResult.evidence);
+        throw new Error(`Model download blocked: ${proofResult.evidence}`);
       }
       
       // Start comprehensive download tracking
@@ -105,23 +77,7 @@ export class TransformersWorker {
         
         // Check for network issues specifically
         if (pipelineError?.message?.includes('DOCTYPE') || pipelineError?.message?.includes('JSON')) {
-          console.warn('🔄 Switching to demo fallback mode due to network restrictions');
-          console.warn('📡 Real model downloading is blocked - demonstrating mesh architecture instead');
-          
-          // Initialize fallback mode
-          this.fallbackMode = true;
-          this.fallbackWorker = new MeshDemoFallback();
-          
-          // Use fallback for this model load
-          await this.fallbackWorker.loadModel(model);
-          this.currentModel = {
-            ...this.fallbackWorker.getStatus(),
-            repo_id: model.repo_id,
-            name: model.name
-          };
-          
-          console.log('✅ Demo fallback mode activated - mesh networking fully functional');
-          return; // Successfully "loaded" in demo mode
+          throw new Error('Network restrictions prevent model downloading from HuggingFace');
         }
         
         throw new Error(`Failed to create pipeline: ${pipelineError?.message || 'Unknown error'}`);
@@ -155,11 +111,6 @@ export class TransformersWorker {
   }
 
   async generateText(prompt: string, params: any): Promise<string> {
-    // Check if we're in fallback mode
-    if (this.fallbackMode && this.fallbackWorker) {
-      return await this.fallbackWorker.generateText(prompt, params);
-    }
-
     if (!this.generator) {
       throw new Error('No model loaded. Please load a model first.');
     }
@@ -214,24 +165,12 @@ export class TransformersWorker {
     this.isLoading = false;
   }
 
-  getStatus(): { hasModel: boolean; modelName: string | null; isLoading: boolean; device?: string; mode?: string } {
-    if (this.fallbackMode && this.fallbackWorker) {
-      const status = this.fallbackWorker.getStatus();
-      return {
-        hasModel: status.hasModel,
-        modelName: status.modelName,
-        isLoading: status.isLoading,
-        device: status.device,
-        mode: 'DEMO_FALLBACK'
-      };
-    }
-    
+  getStatus(): { hasModel: boolean; modelName: string | null; isLoading: boolean; device?: string } {
     return {
       hasModel: !!this.currentModel,
       modelName: this.currentModel?.name || null,
       isLoading: this.isLoading,
-      device: this.currentModel?.device,
-      mode: 'REAL_AI'
+      device: this.currentModel?.device
     };
   }
 }

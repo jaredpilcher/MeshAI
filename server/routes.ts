@@ -22,6 +22,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Log ALL requests to debug what's happening
     if (!req.originalUrl.startsWith("/api/ice") && !req.originalUrl.includes("vite") && !req.originalUrl.includes("@")) {
       console.log(`🌐 REQUEST: ${req.method} ${req.originalUrl}`);
+      if (req.originalUrl.startsWith("/models")) {
+        console.log(`  Headers:`, Object.keys(req.headers).map(k => `${k}: ${req.headers[k]}`).join(', '));
+        console.log(`  User-Agent:`, req.headers['user-agent']?.substring(0, 50) + '...');
+      }
     }
     next();
   });
@@ -85,6 +89,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`🔄 Serving model file from path: ${fullPath}`);
       console.log(`📂 Full URL: ${req.originalUrl}`);
+      console.log(`📋 Accept header: ${req.headers.accept}`);
       
       // Find the file in our model storage
       const file = await objectStorageService.searchModelFile(`models/${fullPath}`);
@@ -94,6 +99,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       console.log(`✅ File found, serving: ${file.name}`);
+      
+      // Add additional debugging for response
+      const originalSend = res.send;
+      const originalJson = res.json;
+      
+      res.send = function(data) {
+        console.log(`📤 Sending response for ${fullPath}: ${typeof data} (${data?.length || 'unknown'} bytes)`);
+        return originalSend.call(this, data);
+      };
+      
+      res.json = function(data) {
+        console.log(`📤 Sending JSON response for ${fullPath}:`, data);
+        return originalJson.call(this, data);
+      };
+      
       await objectStorageService.downloadFile(file, res);
     } catch (error) {
       console.error("❌ Error serving model file:", error);

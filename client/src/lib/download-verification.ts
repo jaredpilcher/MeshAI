@@ -10,7 +10,7 @@ export class DownloadVerificationSystem {
   }
 
   private setupNetworkMonitoring() {
-    // Monitor fetch requests
+    // Monitor fetch requests safely
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
       const url = args[0] as string;
@@ -18,26 +18,31 @@ export class DownloadVerificationSystem {
         console.log('🌐 NETWORK: Attempting to fetch model file:', url);
         this.networkRequests.push({ url, timestamp: Date.now(), type: 'fetch' });
         
-        const response = await originalFetch(...args);
-        const contentType = response.headers.get('content-type');
-        const contentLength = response.headers.get('content-length');
-        
-        console.log('📊 RESPONSE HEADERS:', {
-          status: response.status,
-          contentType,
-          contentLength: contentLength ? parseInt(contentLength) : 'unknown'
-        });
-        
-        // Check if we got actual model data or HTML error
-        if (contentType?.includes('text/html')) {
-          console.error('❌ RECEIVED HTML INSTEAD OF MODEL DATA');
-          console.error('❌ This proves model downloading is blocked');
-        } else if (contentType?.includes('application/json') || contentType?.includes('application/octet-stream')) {
-          console.log('✅ Received actual model file data');
-          this.bytesDownloaded += parseInt(contentLength || '0');
+        try {
+          const response = await originalFetch(...args);
+          const contentType = response.headers.get('content-type');
+          const contentLength = response.headers.get('content-length');
+          
+          console.log('📊 RESPONSE HEADERS:', {
+            status: response.status,
+            contentType,
+            contentLength: contentLength ? parseInt(contentLength) : 'unknown'
+          });
+          
+          // Check if we got actual model data or HTML error
+          if (contentType?.includes('text/html')) {
+            console.error('❌ RECEIVED HTML INSTEAD OF MODEL DATA');
+            console.error('❌ This proves model downloading is blocked');
+          } else if (contentType?.includes('application/json') || contentType?.includes('application/octet-stream')) {
+            console.log('✅ Received actual model file data');
+            this.bytesDownloaded += parseInt(contentLength || '0');
+          }
+          
+          return response;
+        } catch (error) {
+          console.error('❌ Network fetch failed:', error);
+          throw error;
         }
-        
-        return response;
       }
       return originalFetch(...args);
     };

@@ -2,6 +2,7 @@ import { pipeline, env } from '@huggingface/transformers';
 import { testTransformersBasic } from './transformers-test';
 import { MeshDemoFallback } from './mesh-demo-fallback';
 import { downloadVerifier } from './download-verification';
+import { proveModelDownloadIssue, testTransformersModelLoading } from './simple-model-test';
 
 // Configure transformers.js for browser-based inference
 env.allowRemoteModels = true;
@@ -43,6 +44,28 @@ export class TransformersWorker {
       console.log(`⬇️  STARTING COMPREHENSIVE DOWNLOAD VERIFICATION FOR: ${model.repo_id}`);
       console.log(`📊 Expected model size: ~2.2GB for TinyLlama-1.1B`);
       console.log(`⏱️  Expected download time: 30+ seconds on good connection`);
+      
+      // Run definitive proof test first
+      const proofResult = await proveModelDownloadIssue();
+      console.log('🔍 DIRECT PROOF TEST RESULT:', proofResult);
+      
+      if (!proofResult.success) {
+        console.error('🚨 DEFINITIVE PROOF: Model downloading is BLOCKED');
+        console.error('🚨 Evidence:', proofResult.evidence);
+        console.error('🚨 Switching to demo fallback mode immediately');
+        
+        // Switch to fallback mode
+        this.fallbackMode = true;
+        this.fallbackWorker = new MeshDemoFallback();
+        await this.fallbackWorker.loadModel(model);
+        this.currentModel = {
+          ...this.fallbackWorker.getStatus(),
+          repo_id: model.repo_id,
+          name: model.name
+        };
+        console.log('✅ Demo fallback mode activated successfully');
+        return;
+      }
       
       // Start comprehensive download tracking
       downloadVerifier.startDownloadTracking();

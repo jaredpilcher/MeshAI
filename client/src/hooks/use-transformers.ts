@@ -58,12 +58,22 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
     onLog?.('model', `Loading model: ${model.repo_id}`);
 
     try {
+      console.log('Starting model load for:', model);
       await worker.loadModel(model);
       setCurrentModel(model);
       setModelStatus(model.name || model.repo_id);
       onLog?.('model', `Model loaded successfully: ${model.name || model.repo_id}`);
-    } catch (error) {
-      onLog?.('error', `Failed to load model: ${error}`);
+    } catch (error: any) {
+      console.error('Failed to load model in hook:', error);
+      console.error('Full error object:', {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+        cause: error?.cause
+      });
+      const errorMessage = error?.message || `Failed to load model: ${error}`;
+      console.error('Setting error message:', errorMessage);
+      onLog?.('error', errorMessage);
       setModelStatus('Error');
     }
   }, [worker, onLog]);

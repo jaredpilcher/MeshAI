@@ -1,4 +1,5 @@
 import { pipeline, env } from '@huggingface/transformers';
+import { testTransformersBasic } from './transformers-test';
 
 // Configure transformers.js for browser-based inference
 env.allowRemoteModels = true;
@@ -13,6 +14,13 @@ export class TransformersWorker {
 
   constructor() {
     console.log('TransformersWorker initialized with real transformers.js');
+    
+    // Run basic test on initialization
+    testTransformersBasic().then(result => {
+      console.log('Basic transformers test result:', result);
+    }).catch(error => {
+      console.error('Basic transformers test error:', error);
+    });
   }
 
   async loadModel(model: any): Promise<void> {

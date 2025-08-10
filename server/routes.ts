@@ -71,15 +71,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const objectStorage = new ObjectStorageService();
 
   // Model serving routes - serve models from our storage to bypass network restrictions
-  app.get("/models/:modelId/*", async (req, res) => {
+  app.get("/models/*", async (req, res) => {
     try {
-      const modelId = req.params.modelId;
-      const fileName = (req.params as any)[0]; // Everything after the wildcard
-      const filePath = `models/${modelId}/${fileName}`;
+      // Extract full path after /models/ 
+      const fullPath = req.params[0]; // Everything after /models/
       
-      console.log(`Serving model file: ${filePath}`);
+      console.log(`Serving model file from path: ${fullPath}`);
       
-      const file = await objectStorage.searchModelFile(filePath);
+      // Find the file in our model storage
+      const file = await objectStorage.searchModelFile(`models/${fullPath}`);
       if (!file) {
         return res.status(404).json({ error: "Model file not found" });
       }

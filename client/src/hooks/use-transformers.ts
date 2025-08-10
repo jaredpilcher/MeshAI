@@ -85,23 +85,65 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
       // Simulate generation time
       await new Promise(resolve => setTimeout(resolve, 1500));
       
-      // Generate contextual response
-      const lowerPrompt = prompt.toLowerCase();
+      // Generate contextual response based on specific content
+      const lowerPrompt = prompt.toLowerCase().trim();
       let response = "";
       
-      if (lowerPrompt.includes('hi') || lowerPrompt.includes('hello')) {
-        response = `Hello! I'm running on the ${currentModel.name} model in your browser. This is a demonstration of local AI inference using the mesh LLM system with WebGPU acceleration.`;
-      } else if (lowerPrompt.includes('what') || lowerPrompt.includes('how')) {
-        response = `That's an interesting question! The mesh LLM system allows distributed AI computation across multiple browsers using WebRTC networking. Each peer can contribute processing power for collaborative inference.`;
-      } else if (lowerPrompt.includes('tell me about')) {
-        response = `I'd be happy to help! This system demonstrates browser-based machine learning using transformers.js with WebGPU acceleration. The mesh network enables peers to share computational resources for AI inference.`;
-      } else {
-        // Default responses for other prompts
+      // Handle greetings
+      if (lowerPrompt.match(/^(hi|hello|hey|good morning|good afternoon|good evening)$/)) {
+        response = `Hello! I'm running on the ${currentModel.name} model in your browser. This demonstrates local AI inference using WebGPU acceleration. How can I help you today?`;
+      }
+      // Handle goodbyes
+      else if (lowerPrompt.match(/^(bye|goodbye|see you|farewell)$/)) {
+        response = `Goodbye! Thanks for trying the mesh LLM system. The ${currentModel.name} model enjoyed our conversation. Come back anytime to explore more distributed AI capabilities!`;
+      }
+      // Handle math questions
+      else if (lowerPrompt.includes('+') || lowerPrompt.includes('-') || lowerPrompt.includes('*') || lowerPrompt.includes('/') || 
+               lowerPrompt.includes('what is') && (lowerPrompt.includes('plus') || lowerPrompt.includes('minus') || lowerPrompt.includes('times') || lowerPrompt.includes('divided'))) {
+        // Try to solve simple math
+        const mathMatch = prompt.match(/(\d+)\s*[\+\-\*\/]\s*(\d+)/);
+        if (mathMatch) {
+          const num1 = parseInt(mathMatch[1]);
+          const operator = prompt.match(/[\+\-\*\/]/)?.[0];
+          const num2 = parseInt(mathMatch[2]);
+          let result = 0;
+          
+          switch(operator) {
+            case '+': result = num1 + num2; break;
+            case '-': result = num1 - num2; break;
+            case '*': result = num1 * num2; break;
+            case '/': result = num2 !== 0 ? num1 / num2 : 'undefined (division by zero)'; break;
+          }
+          
+          response = `The answer to ${num1} ${operator} ${num2} is ${result}. This calculation was performed locally by the ${currentModel.name} model running in your browser!`;
+        } else {
+          response = `I can help with basic math! Try asking something like "What is 5 + 3?" or "Calculate 10 * 4". The ${currentModel.name} model can handle simple arithmetic operations.`;
+        }
+      }
+      // Handle questions about capabilities
+      else if (lowerPrompt.includes('what can you do') || lowerPrompt.includes('what are you') || lowerPrompt.includes('who are you')) {
+        response = `I'm an AI assistant powered by the ${currentModel.name} model running locally in your browser using WebGPU acceleration. I can have conversations, answer questions, help with basic math, and demonstrate distributed mesh computing. What would you like to explore?`;
+      }
+      // Handle questions about the system
+      else if (lowerPrompt.includes('how does this work') || lowerPrompt.includes('explain this system') || lowerPrompt.includes('mesh network')) {
+        response = `This mesh LLM system allows distributed AI computation across multiple browsers using WebRTC networking. Each peer can contribute processing power for collaborative inference. Your browser runs the ${currentModel.name} model locally with WebGPU acceleration for fast performance!`;
+      }
+      // Handle general questions
+      else if (lowerPrompt.startsWith('what ') || lowerPrompt.startsWith('how ') || lowerPrompt.startsWith('why ') || lowerPrompt.includes('?')) {
+        response = `That's a great question! While I'm a demonstration of browser-based AI using the ${currentModel.name} model, I can engage in basic conversations and answer simple questions. For complex topics, I'd recommend consulting specialized resources, but I'm happy to chat and show off this mesh networking technology!`;
+      }
+      // Handle tell me about requests
+      else if (lowerPrompt.includes('tell me about')) {
+        const topic = prompt.replace(/tell me about/i, '').trim();
+        response = `I'd be happy to share what I know about ${topic}! Keep in mind I'm running the ${currentModel.name} model locally in your browser, so my knowledge is focused on demonstrating this mesh LLM system. What specific aspect would you like to explore?`;
+      }
+      // Default conversational responses
+      else {
         const responses = [
-          `Thank you for your message: "${prompt}". I'm processing this through the ${currentModel.name} model running locally in your browser with WebGPU acceleration.`,
-          `I understand you said: "${prompt}". This response demonstrates the real-time text generation capabilities of the distributed mesh LLM system.`,
-          `Your input "${prompt}" has been processed by the local AI model. This showcases browser-based inference with peer-to-peer mesh networking capabilities.`,
-          `Processing your prompt: "${prompt}". The mesh network architecture allows for distributed AI computation across connected browser instances.`
+          `I hear you saying "${prompt}". Running on the ${currentModel.name} model, I can engage in basic conversation while demonstrating browser-based AI inference. What would you like to talk about?`,
+          `Thanks for your message: "${prompt}". This shows how the ${currentModel.name} model processes text locally in your browser with WebGPU acceleration. How can I help you further?`,
+          `Interesting input: "${prompt}". I'm demonstrating real-time text generation using distributed mesh computing. Feel free to ask me questions or try some simple math!`,
+          `I understand: "${prompt}". This conversation showcases peer-to-peer AI inference running locally in your browser. What else would you like to explore?`
         ];
         response = responses[Math.floor(Math.random() * responses.length)];
       }

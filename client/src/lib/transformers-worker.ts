@@ -6,7 +6,9 @@ env.allowLocalModels = true;
 env.useBrowserCache = true;
 
 // Enable WebGPU with fallback to WASM/CPU
-env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
+if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
+  env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
+}
 
 // Real transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
@@ -29,14 +31,9 @@ export class TransformersWorker {
       console.log(`Loading real model from HuggingFace: ${model.repo_id}`);
       console.log('This will download and cache the model in your browser...');
 
-      // Load the actual model using transformers.js
+      // Load the actual model using transformers.js with simpler configuration
       this.generator = await pipeline('text-generation', model.repo_id, {
-        dtype: {
-          embed_tokens: 'fp16',
-          vision_encoder: 'fp16', 
-          decoder_model_merged: 'q4', // Use quantized weights for efficiency
-        },
-        device: 'webgpu', // Try WebGPU first, will fallback to CPU if not available
+        quantized: true, // Use quantized model for efficiency
         progress_callback: (progress: any) => {
           console.log(`Model loading progress: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
         }

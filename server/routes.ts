@@ -74,19 +74,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/models/*", async (req, res) => {
     try {
       // Extract full path after /models/ 
-      const fullPath = req.params[0]; // Everything after /models/
+      const fullPath = (req.params as any)[0]; // Everything after /models/
       
-      console.log(`Serving model file from path: ${fullPath}`);
+      console.log(`🔄 Serving model file from path: ${fullPath}`);
+      console.log(`📂 Full URL: ${req.originalUrl}`);
       
       // Find the file in our model storage
       const file = await objectStorage.searchModelFile(`models/${fullPath}`);
       if (!file) {
+        console.log(`❌ File not found: models/${fullPath}`);
         return res.status(404).json({ error: "Model file not found" });
       }
       
+      console.log(`✅ File found, serving: ${file.name}`);
       await objectStorage.downloadFile(file, res);
     } catch (error) {
-      console.error("Error serving model file:", error);
+      console.error("❌ Error serving model file:", error);
       if (error instanceof ObjectNotFoundError) {
         return res.status(404).json({ error: "Model file not found" });
       }

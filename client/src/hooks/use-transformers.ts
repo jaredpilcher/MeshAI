@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { TransformersWorker } from '@/lib/transformers-worker';
+import { transformersWorker } from '@/lib/transformers-worker';
 import type { HFModel } from '@shared/schema';
 
 interface UseTransformersOptions {
@@ -9,15 +9,15 @@ interface UseTransformersOptions {
 }
 
 export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTransformersOptions) {
-  const [worker, setWorker] = useState<TransformersWorker | null>(null);
+  const [worker, setWorker] = useState<typeof transformersWorker | null>(null);
   const [currentModel, setCurrentModel] = useState<HFModel | null>(null);
   const [acceleratorStatus, setAcceleratorStatus] = useState('Detecting...');
   const [modelStatus, setModelStatus] = useState('None');
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    const workerInstance = new TransformersWorker();
-    setWorker(workerInstance);
+    // Use the singleton instance
+    setWorker(transformersWorker);
 
     // Detect WebGPU support
     const detectAccelerator = async () => {
@@ -44,7 +44,7 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
     detectAccelerator();
 
     return () => {
-      workerInstance.terminate();
+      // No need to terminate singleton, just clean up local state
     };
   }, [onLog]);
 

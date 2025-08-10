@@ -5,6 +5,8 @@ import { Server as IOServer } from "socket.io";
 import { storage } from "./storage";
 import { insertMeshSessionSchema, type HFModel, type ModelManifest } from "@shared/schema";
 import { z } from "zod";
+import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+import { modelDownloader } from "./modelDownloader";
 
 // Curated models known to work with transformers.js
 const CURATED_MODELS: HFModel[] = [
@@ -62,6 +64,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(sessions);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch active sessions" });
+    }
+  });
+
+  // Create object storage service instance
+  const objectStorage = new ObjectStorageService();
+
+  // Model serving routes - serve models from our storage to bypass network restrictions
+  app.get("/models/:modelId/*", async (req, res) => {
+    try {
+      const modelId = req.params.modelId;
+      const fileName = (req.params as any)[0]; // Everything after the wildcard
+      const filePath = `models/${modelId}/${fileName}`;
+      
+      console.log(`Serving model file: ${filePath}`);
+      
+      const file = await objectStorage.searchModelFile(filePath);
+      if (!file) {
+        return res.status(404).json({ error: "Model file not found" });
+      }
+      
+      await objectStorage.downloadFile(file, res);
+    } catch (error) {
+      console.error("Error serving model file:", error);
+      if (error instanceof ObjectNotFoundError) {
+        return res.status(404).json({ error: "Model file not found" });
+      }
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Download model to our storage
+  app.post("/api/models/:modelId/download", async (req, res) => {
+    try {
+      const modelId = req.params.modelId;
+      console.log(`Starting download for model: ${modelId}`);
+      
+      // Check if model is already available
+      if (await modelDownloader.isModelAvailable(modelId)) {
+        return res.json({ 
+          status: "already_available", 
+          message: "Model is already downloaded and ready" 
+        });
+      }
+      
+      // Start download (async)
+      modelDownloader.downloadModel(modelId).catch(err => {
+        console.error(`Background download failed for ${modelId}:`, err);
+      });
+      
+      res.json({ 
+        status: "downloading", 
+        message: "Model download started" 
+      });
+    } catch (error) {
+      console.error("Error starting model download:", error);
+      res.status(500).json({ error: "Failed to start model download" });
+    }
+  });
+
+  // Check model download status
+  app.get("/api/models/:modelId/status", async (req, res) => {
+    try {
+      const modelId = req.params.modelId;
+      const isAvailable = await modelDownloader.isModelAvailable(modelId);
+      const progress = modelDownloader.getDownloadProgress(modelId);
+      
+      res.json({
+        modelId,
+        isAvailable,
+        isDownloading: progress.isDownloading,
+        status: isAvailable ? "ready" : progress.isDownloading ? "downloading" : "not_downloaded"
+      });
+    } catch (error) {
+      console.error("Error checking model status:", error);
+      res.status(500).json({ error: "Failed to check model status" });
     }
   });
 

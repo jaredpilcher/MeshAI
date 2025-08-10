@@ -1,20 +1,29 @@
-import { pipeline, env } from '@huggingface/transformers';
-import { downloadVerifier } from './download-verification';
-import { proveModelDownloadIssue } from './simple-model-test';
+// Browser-based AI worker using server proxy for model loading
+// Bypasses network restrictions by downloading models through our server
 
-// Configure transformers.js for browser-based inference
+import {
+  pipeline,
+  env,
+  type TextGenerationPipeline
+} from '@huggingface/transformers';
+
+// Configure transformers.js to use our server proxy
 env.allowRemoteModels = true;
 env.allowLocalModels = true;
 env.useBrowserCache = true;
 
-// Real transformers.js implementation for browser-based AI inference
+// Override the remote URL to point to our server instead of HuggingFace
+env.remoteHost = window.location.origin;
+env.remotePathTemplate = '/models/{model}/{file}';
+
+// Server-proxy transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
-  private generator: any = null;
+  private generator: TextGenerationPipeline | null = null;
   private currentModel: any = null;
   private isLoading = false;
 
   constructor() {
-    console.log('TransformersWorker initialized for real browser-based AI inference');
+    console.log('TransformersWorker initialized with server proxy for model loading');
   }
 
   async loadModel(model: any): Promise<void> {
@@ -25,152 +34,152 @@ export class TransformersWorker {
     this.isLoading = true;
 
     try {
-      console.log(`⬇️  STARTING COMPREHENSIVE DOWNLOAD VERIFICATION FOR: ${model.repo_id}`);
-      console.log(`📊 Expected model size: ~2.2GB for TinyLlama-1.1B`);
-      console.log(`⏱️  Expected download time: 30+ seconds on good connection`);
+      console.log(`🔄 Loading model through server proxy: ${model.repo_id}`);
       
-      // Run definitive proof test first
-      const proofResult = await proveModelDownloadIssue();
-      console.log('Direct proof test result:', proofResult);
+      // Step 1: Trigger model download on server if needed
+      await this.ensureModelDownloaded(model.repo_id);
       
-      if (!proofResult.success) {
-        console.error('Model downloading is blocked in this environment');
-        console.error('Evidence:', proofResult.evidence);
-        throw new Error(`Model download blocked: ${proofResult.evidence}`);
-      }
+      // Step 2: Wait for download completion
+      await this.waitForModelReady(model.repo_id);
       
-      // Start comprehensive download tracking
-      downloadVerifier.startDownloadTracking();
+      // Step 3: Load model from our server
+      console.log('Creating pipeline from server-hosted model...');
       
-      console.log('Creating pipeline for text generation...');
-      
-      // Use a try-catch for the pipeline creation to catch specific errors
-      try {
-        this.generator = await pipeline('text-generation', model.repo_id, {
+      // Create pipeline with explicit type assertion to avoid complex union types
+      this.generator = await pipeline(
+        'text-generation', 
+        model.repo_id, 
+        {
           revision: 'main',
           cache_dir: './.cache',
           progress_callback: (progress: any) => {
-            console.log(`Model loading progress: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
-            if (progress.status) {
-              console.log(`Status: ${progress.status}`);
-            }
+            console.log(`Model loading: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
           }
-        });
-        console.log('✅ Pipeline created successfully!');
-        
-        // Run comprehensive download verification
-        const verificationResult = await downloadVerifier.verifyModelDownload(model.repo_id);
-        downloadVerifier.logVerificationReport(verificationResult);
-        
-        if (!verificationResult.actuallyDownloaded) {
-          console.error('🚨 VERIFICATION FAILED: Model did NOT actually download to browser');
-          console.error('🚨 Evidence suggests this was a fake/cached response, not real model data');
-          throw new Error('Model download verification failed - no actual model data received');
         }
-      } catch (pipelineError: any) {
-        console.error('Pipeline creation failed:', pipelineError);
-        console.error('Pipeline error details:', {
-          message: pipelineError?.message,
-          name: pipelineError?.name,
-          stack: pipelineError?.stack?.substring(0, 500)
-        });
-        
-        // Check for network issues specifically
-        if (pipelineError?.message?.includes('DOCTYPE') || pipelineError?.message?.includes('JSON')) {
-          throw new Error('Network restrictions prevent model downloading from HuggingFace');
-        }
-        
-        throw new Error(`Failed to create pipeline: ${pipelineError?.message || 'Unknown error'}`);
-      }
-
-      this.currentModel = {
-        name: model.name || model.repo_id,
-        repo_id: model.repo_id,
-        task: model.task || 'text-generation',
-        loaded: true,
-        device: this.generator?.model?.device || 'cpu'
-      };
-
-      console.log(`Real model loaded successfully: ${this.currentModel.name}`);
-      console.log(`Running on device: ${this.currentModel.device}`);
+      ) as any;
+      
+      this.currentModel = model;
+      console.log('✅ Model loaded successfully from server proxy!');
       
     } catch (error: any) {
-      console.error('Real model loading failed:', error);
-      console.error('Error details:', {
-        message: error?.message,
-        stack: error?.stack,
-        name: error?.name,
-        cause: error?.cause
-      });
-      this.currentModel = null;
-      this.generator = null;
-      throw new Error(`Model loading failed: ${error?.message || 'Unknown error'}`);
+      console.error('Model loading failed:', error);
+      throw new Error(`Failed to load model: ${error.message}`);
     } finally {
       this.isLoading = false;
     }
   }
 
-  async generateText(prompt: string, params: any): Promise<string> {
-    if (!this.generator) {
-      throw new Error('No model loaded. Please load a model first.');
+  private async ensureModelDownloaded(modelId: string): Promise<void> {
+    try {
+      console.log(`Triggering server download for: ${modelId}`);
+      
+      const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/download`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Server download failed: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      console.log('Server download status:', result);
+      
+    } catch (error) {
+      console.error('Failed to trigger server download:', error);
+      throw error;
     }
+  }
 
-    if (this.isLoading) {
-      throw new Error('Model is still loading');
+  private async waitForModelReady(modelId: string, maxWaitTime = 300000): Promise<void> {
+    const startTime = Date.now();
+    const pollInterval = 2000; // Check every 2 seconds
+    
+    console.log(`Waiting for model to be ready on server...`);
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/status`);
+        
+        if (!response.ok) {
+          console.warn('Status check failed, retrying...');
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          continue;
+        }
+        
+        const status = await response.json();
+        console.log('Model status:', status);
+        
+        if (status.isAvailable) {
+          console.log('✅ Model is ready on server!');
+          return;
+        }
+        
+        if (status.isDownloading) {
+          console.log('📥 Model still downloading on server...');
+        } else {
+          console.log('⏳ Model not ready yet, will retry...');
+        }
+        
+      } catch (error) {
+        console.warn('Status check error:', error);
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+    
+    throw new Error(`Model download timeout after ${maxWaitTime / 1000}s`);
+  }
+
+  async generateText(prompt: string, options: any = {}): Promise<string> {
+    if (!this.generator) {
+      throw new Error('No model loaded');
     }
 
     try {
-      console.log(`Starting real AI inference for prompt: ${prompt.substring(0, 50)}...`);
+      console.log('Generating text with real AI model...');
       
-      const startTime = performance.now();
-      
-      // Perform actual AI inference using the loaded model
       const result = await this.generator(prompt, {
-        max_new_tokens: params.max_new_tokens || 50,
-        temperature: params.temperature || 0.7,
-        top_p: params.top_p || 0.9,
+        max_new_tokens: options.max_new_tokens || 50,
+        temperature: options.temperature || 0.7,
         do_sample: true,
-        pad_token_id: this.generator.tokenizer?.pad_token_id,
-        eos_token_id: this.generator.tokenizer?.eos_token_id,
-        return_full_text: false, // Only return generated part
+        ...options
       });
 
-      const inferenceTime = performance.now() - startTime;
-      
-      let generatedText = '';
-      if (Array.isArray(result) && result.length > 0) {
-        generatedText = result[0].generated_text || '';
-      } else if (typeof result === 'string') {
-        generatedText = result;
-      }
-
-      if (!generatedText.trim()) {
-        throw new Error('Model generated empty response. Try a different prompt.');
-      }
-
-      console.log(`Real AI inference completed in ${Math.round(inferenceTime)}ms`);
-      console.log('Generated response:', generatedText);
+      const generatedText = (result as any)[0]?.generated_text || '';
+      console.log('AI generation completed:', generatedText.length, 'characters');
       
       return generatedText;
       
     } catch (error: any) {
-      console.error('Real AI inference error:', error);
-      throw new Error(`AI inference failed: ${error?.message || 'Unknown error'}`);
+      console.error('Text generation failed:', error);
+      throw new Error(`Generation failed: ${error.message}`);
     }
   }
 
-  terminate(): void {
+  getStatus() {
+    return {
+      hasModel: !!this.generator,
+      modelName: this.currentModel?.name || 'None',
+      isLoading: this.isLoading,
+      mode: 'SERVER_PROXY'
+    };
+  }
+
+  destroy() {
     this.generator = null;
     this.currentModel = null;
     this.isLoading = false;
+    console.log('TransformersWorker destroyed');
   }
 
-  getStatus(): { hasModel: boolean; modelName: string | null; isLoading: boolean; device?: string } {
-    return {
-      hasModel: !!this.currentModel,
-      modelName: this.currentModel?.name || null,
-      isLoading: this.isLoading,
-      device: this.currentModel?.device
-    };
+  // Compatibility method for React hook cleanup
+  terminate() {
+    this.destroy();
   }
 }
+
+// Export singleton instance
+export const transformersWorker = new TransformersWorker();

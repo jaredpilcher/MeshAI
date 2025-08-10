@@ -31,13 +31,18 @@ export class TransformersWorker {
       console.log(`Loading real model from HuggingFace: ${model.repo_id}`);
       console.log('This will download and cache the model in your browser...');
 
-      // Load the actual model using transformers.js with simpler configuration
+      // Load the actual model using transformers.js with basic configuration
+      console.log('Creating pipeline for text generation...');
       this.generator = await pipeline('text-generation', model.repo_id, {
-        quantized: true, // Use quantized model for efficiency
+        quantized: false, // Start with non-quantized to avoid compatibility issues
         progress_callback: (progress: any) => {
           console.log(`Model loading progress: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
+          if (progress.status) {
+            console.log(`Status: ${progress.status}`);
+          }
         }
       });
+      console.log('Pipeline created successfully!');
 
       this.currentModel = {
         name: model.name || model.repo_id,
@@ -52,9 +57,14 @@ export class TransformersWorker {
       
     } catch (error) {
       console.error('Real model loading failed:', error);
+      console.error('Error details:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        name: error instanceof Error ? error.name : undefined
+      });
       this.currentModel = null;
       this.generator = null;
-      throw error;
+      throw new Error(`Model loading failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.isLoading = false;
     }

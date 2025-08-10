@@ -76,15 +76,27 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
 
     setIsGenerating(true);
     onLog?.('info', `Starting generation for ${params.max_new_tokens || 128} tokens`);
+    console.log('Generating text with:', { prompt, messageId, currentModel });
 
     try {
       // Simulate streaming by generating text and emitting tokens
       const result = await worker.generateText(prompt, params);
+      console.log('Generated result:', result);
+      
+      if (!result || result.trim() === '') {
+        onLog?.('error', 'Generated text is empty');
+        onToken?.('Sorry, I could not generate a response. Please try again.', messageId);
+        onGenerationComplete?.(messageId);
+        return;
+      }
       
       // Simulate token-by-token streaming
       const tokens = result.split(' ');
+      console.log('Streaming tokens:', tokens);
+      
       for (let i = 0; i < tokens.length; i++) {
         const token = i === 0 ? tokens[i] : ' ' + tokens[i];
+        console.log('Emitting token:', token);
         onToken?.(token, messageId);
         
         // Small delay to simulate streaming
@@ -94,7 +106,10 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
       onGenerationComplete?.(messageId);
       onLog?.('info', `Generation completed: ${tokens.length} tokens`);
     } catch (error) {
+      console.error('Generation error:', error);
       onLog?.('error', `Generation failed: ${error}`);
+      onToken?.('Error generating response. Please try again.', messageId);
+      onGenerationComplete?.(messageId);
     } finally {
       setIsGenerating(false);
     }

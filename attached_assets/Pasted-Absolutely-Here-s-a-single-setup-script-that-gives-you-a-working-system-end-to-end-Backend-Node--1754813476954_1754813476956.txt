@@ -1,0 +1,686 @@
+Absolutely. Here’s a single setup script that gives you a working system end-to-end:
+
+Backend (Node/Express + Socket.IO)
+
+Serves the SPA frontend
+
+Provides a /manifest endpoint that returns a curated set of Hugging Face models known to work in-browser (via transformers.js), plus optional HF search.
+
+Acts as the signaling server for a browser-to-browser mesh (WebRTC).
+
+
+Frontend (static SPA + Web Worker)
+
+Loads a random model from /manifest (or a specific one you choose)
+
+Runs in-browser inference with WebGPU (fallback to WASM/CPU) via @huggingface/transformers
+
+Streams tokens to the UI
+
+Joins a mesh: you can ask locally or broadcast a job to the mesh; peers with “accept jobs” enabled will compute on their device and stream back the answer.
+
+
+
+> Save as setup_mesh_web.sh, then run:
+bash setup_mesh_web.sh
+Then:
+cd mesh-nano-llm && npm run dev → open http://localhost:8787
+
+
+
+
+---
+
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="mesh-nano-llm"
+PORT=8787
+
+echo "==> Creating project at ${ROOT}"
+mkdir -p "${ROOT}"/{server,public}
+cd "${ROOT}"
+
+########################################
+# package.json (single repo for server+static)
+########################################
+cat > package.json <<JSON
+{
+  "name": "mesh-nano-llm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server/dev.js",
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "3.7.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "node-fetch": "^3.3.2",
+    "socket.io": "^4.7.5"
+  }
+}
+JSON
+
+cat > .env <<ENV
+PORT=${PORT}
+# Optional: restrict CORS to your domain in prod
+CORS_ORIGIN=*
+# Comma-separated ICE servers (TURN strongly recommended for prod)
+ICE_SERVERS=stun:stun.l.google.com:19302
+# HF search toggle (server-side discovery). Leave off for curated list only.
+ENABLE_HF_SEARCH=false
+ENV
+
+########################################
+# Server (Express static + manifest + signaling)
+########################################
+cat > server/server.js <<'JS'
+import 'dotenv/config'
+import express from 'express'
+import http from 'http'
+import helmet from 'helmet'
+import cors from 'cors'
+import { Server as IOServer } from 'socket.io'
+import fetch from 'node-fetch'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+const app = express()
+app.use(helmet({
+  contentSecurityPolicy: false
+}))
+app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || '*' }))
+app.use(express.json())
+
+// ---- Static site ----
+const pub = path.join(__dirname, '..', 'public')
+app.use(express.static(pub))
+
+// ---- Health ----
+app.get('/health', (_req, res) => res.json({ ok:true }))
+
+// ---- ICE list for clients ----
+app.get('/ice', (_req, res) => {
+  const list = (process.env.ICE_SERVERS || '').split(',').map(s => ({ urls: s.trim() })).filter(Boolean)
+  res.json({ iceServers: list.length ? list : [{ urls: 'stun:stun.l.google.com:19302' }] })
+})
+
+// ---- Curated models that are known to work with transformers.js in-browser ----
+//  Note: These are hub repo IDs; transformers.js downloads web-optimized ONNX automatically.
+const CURATED = [
+  // Tiny and browser-friendly (not 20M, but small enough for web; your own 20M ONNX exports will plug in too)
+  { repo_id: "Xenova/distilgpt2",           task: "text-generation",   name: "distilgpt2 (Xenova)" },
+  { repo_id: "Xenova/gpt2",                 task: "text-generation",   name: "gpt2 (Xenova)" },
+  { repo_id: "Xenova/tinyllama-1.1b-chat-v1.0", task: "text-generation", name: "TinyLlama 1.1B Chat (Xenova)" },
+  { repo_id: "Xenova/t5-small",             task: "text2text-generation", name: "t5-small (Xenova)" }
+]
+
+// ---- Optional HF Search (best-effort) ----
+async function hfSearchTinyTextGen() {
+  // Public endpoint; simple filter. For production, add caching & more filters.
+  const url = 'https://huggingface.co/api/models?pipeline_tag=text-generation&author=Xenova&sort=downloads&limit=20'
+  const r = await fetch(url, { headers: { 'accept': 'application/json' }})
+  if (!r.ok) return []
+  const arr = await r.json()
+  return arr
+    .map(m => ({ repo_id: m.modelId, task: 'text-generation', name: m.modelId }))
+    .filter(x => x.repo_id && !CURATED.find(c => c.repo_id === x.repo_id))
+}
+
+// ---- Manifest endpoint ----
+app.get('/manifest', async (_req, res) => {
+  let models = [...CURATED]
+  try {
+    if ((process.env.ENABLE_HF_SEARCH || '').toLowerCase() === 'true') {
+      const extra = await hfSearchTinyTextGen()
+      models = models.concat(extra)
+    }
+  } catch {}
+  // Randomize order a bit
+  models = models.sort(() => Math.random() - 0.5)
+  res.json({ models })
+})
+
+// ---- Fallback to index.html for SPA ----
+app.get('*', (_req, res) => res.sendFile(path.join(pub, 'index.html')))
+
+// ---- HTTP + Socket.IO (signaling for mesh) ----
+const server = http.createServer(app)
+const io = new IOServer(server, {
+  cors: { origin: process.env.CORS_ORIGIN?.split(',') || '*' }
+})
+
+/** Mesh protocol:
+ * - room "global" by default
+ * - events:
+ *   - 'join' {room}
+ *   - 'signal' {to, data} direct relay for WebRTC
+ *   - 'roster' server emits list of peer ids in room
+ *   - 'job' {id,prompt} broadcast (requester->room)
+ *   - 'chunk' {id, from, text, done?} stream back partials (solver->requester)
+ */
+const rooms = new Map() // room -> Set(socket.id)
+
+io.on('connection', (socket) => {
+  let room = 'global'
+  join(room)
+
+  function join(nextRoom) {
+    if (room) leave()
+    room = nextRoom || 'global'
+    if (!rooms.has(room)) rooms.set(room, new Set())
+    rooms.get(room).add(socket.id)
+    socket.join(room)
+    emitRoster(room)
+  }
+
+  function leave() {
+    if (!room) return
+    const set = rooms.get(room)
+    if (set) {
+      set.delete(socket.id)
+      if (set.size === 0) rooms.delete(room)
+    }
+    socket.leave(room)
+    emitRoster(room)
+  }
+
+  function emitRoster(r) {
+    const set = rooms.get(r) || new Set()
+    io.to(r).emit('roster', Array.from(set))
+  }
+
+  socket.on('join', ({ room: r }) => join(r || 'global'))
+  socket.on('disconnect', () => leave())
+
+  // WebRTC signaling relay
+  socket.on('signal', ({ to, data }) => {
+    if (!to) return
+    io.to(to).emit('signal', { from: socket.id, data })
+  })
+
+  // Job broadcast (request to mesh)
+  socket.on('job', ({ id, prompt }) => {
+    // broadcast to room peers except requester
+    socket.to(room).emit('job', { id, from: socket.id, prompt })
+  })
+
+  // Stream back chunks to requester
+  socket.on('chunk', ({ id, to, text, done }) => {
+    io.to(to).emit('chunk', { id, from: socket.id, text, done: !!done })
+  })
+})
+
+const PORT = Number(process.env.PORT || 8787)
+server.listen(PORT, () => console.log(`[server] http://localhost:${PORT}`))
+JS
+
+# Tiny dev wrapper that hard-enables HF search in dev if you want
+cat > server/dev.js <<'JS'
+import 'dotenv/config'
+process.env.ENABLE_HF_SEARCH = process.env.ENABLE_HF_SEARCH || 'false'
+await import('./server.js')
+JS
+
+########################################
+# Frontend (static SPA)
+########################################
+cat > public/index.html <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1, maximum-scale=1"/>
+  <title>Mesh NanoLLM (Browser-only)</title>
+  <meta name="color-scheme" content="light dark"/>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<header>
+  <h1>🧠 Mesh NanoLLM</h1>
+  <div id="status">
+    <span id="accel">Detecting accelerator…</span>
+    <span id="model">Model: (none)</span>
+    <span id="peers">Peers: 0</span>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="row">
+      <button id="btn-load-random">Load Random HF Model</button>
+      <input id="repo" placeholder="…or HF repo (e.g. Xenova/distilgpt2)"/>
+      <button id="btn-load-repo">Load This</button>
+      <label class="row"><input type="checkbox" id="accept"/> Accept remote jobs</label>
+    </div>
+    <p class="hint">Models come from Hugging Face via transformers.js (WebGPU when available, WASM fallback).</p>
+  </section>
+
+  <section class="card chat">
+    <div id="log"></div>
+    <div class="row input">
+      <textarea id="prompt" rows="3" placeholder="Ask locally or broadcast to the mesh…"></textarea>
+      <div class="col">
+        <label>Max new <input id="maxNew" type="number" min="1" max="512" value="128"/></label>
+        <label>Temp <input id="temp" type="number" min="0" step="0.1" value="0.7"/></label>
+        <label>Top-p <input id="topp" type="number" min="0" max="1" step="0.05" value="0.9"/></label>
+        <div class="row">
+          <button id="btn-local">Run Locally</button>
+          <button id="btn-mesh">Ask Mesh</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer><small>Everything runs in your browser. Mesh is P2P (WebRTC) with a tiny signaling server.</small></footer>
+
+<script type="module" src="/main.js"></script>
+</body>
+</html>
+HTML
+
+cat > public/styles.css <<'CSS'
+:root { --bg:#0b0c10; --fg:#e5e7eb; --muted:#9ca3af; --card:#111827; --accent:#22d3ee; }
+@media (prefers-color-scheme: light) { :root { --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --card:#ffffff; --accent:#0ea5e9; } }
+*{box-sizing:border-box} html,body{height:100%}
+body{margin:0;font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:1px solid #00000033}
+h1{margin:0;font-size:20px}
+#status{display:flex;gap:12px;font-size:13px;color:var(--muted)}
+main{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid #00000022;border-radius:16px;padding:16px;box-shadow:0 10px 30px #00000018}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.col{display:flex;flex-direction:column;gap:6px}
+input,textarea,button{border-radius:10px;border:1px solid #00000022;padding:10px;background:transparent;color:inherit}
+input[type="number"]{width:90px}
+button{cursor:pointer;border-color:#00000044}
+button:hover{outline:1px solid var(--accent)}
+.hint{color:var(--muted);margin-top:8px}
+.chat{min-height:420px}
+#log{min-height:260px;max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.msg{padding:10px 12px;border-radius:12px;max-width:80%}
+.me{background:#22d3ee22;align-self:flex-end}
+.ai{background:#10b98122;align-self:flex-start}
+.mesh{background:#f59e0b22;align-self:flex-start}
+.sys{background:#9ca3af22;align-self:center}
+.input{margin-top:12px}
+footer{padding:16px;text-align:center;color:var(--muted)}
+CSS
+
+cat > public/main.js <<'JS'
+import { setupMesh } from './mesh.js'
+
+const $ = (id)=>document.getElementById(id)
+const log = (cls, text) => { const el = document.createElement('div'); el.className=`msg ${cls}`; el.textContent=text; $('log').appendChild(el); $('log').scrollTop=$('log').scrollHeight }
+
+const worker = new Worker('/worker.js', { type:'module' })
+let currentModel = null
+
+// UI wireup
+$('btn-load-random').onclick = async () => {
+  const r = await fetch('/manifest', { cache:'no-cache' })
+  const m = await r.json()
+  const choice = m.models[Math.floor(Math.random()*m.models.length)]
+  await loadModel(choice)
+}
+$('btn-load-repo').onclick = async () => {
+  const repo = $('repo').value.trim()
+  if (!repo) return alert('Enter a Hugging Face repo ID (e.g., Xenova/distilgpt2)')
+  await loadModel({ repo_id: repo })
+}
+
+$('btn-local').onclick = () => run(false)
+$('btn-mesh').onclick = () => run(true)
+
+async function loadModel(model) {
+  currentModel = model
+  $('model').textContent = `Model: loading…`
+  worker.postMessage({ type:'load', model })
+}
+
+worker.onmessage = (e) => {
+  const { type, data } = e.data
+  if (type === 'status') {
+    if (data.accel) $('accel').textContent = `Accelerator: ${data.accel}`
+    if (data.model) $('model').textContent = `Model: ${data.model}`
+  } else if (type === 'log') {
+    log('sys', data)
+  } else if (type === 'stream') {
+    streamUpdate(data)
+  } else if (type === 'error') {
+    log('sys', '⚠️ ' + data)
+  }
+}
+
+let currentAI = null
+function streamUpdate({ mode, chunk, who='ai' }) {
+  if (mode === 'start') {
+    currentAI = document.createElement('div')
+    currentAI.className = `msg ${who}`
+    currentAI.textContent = ''
+    $('log').appendChild(currentAI)
+  } else if (mode === 'token') {
+    currentAI.textContent += chunk
+  } else if (mode === 'end') {
+    currentAI = null
+  }
+  $('log').scrollTop = $('log').scrollHeight
+}
+
+// Mesh
+const mesh = await setupMesh({
+  onRoster: (n)=> $('peers').textContent = `Peers: ${n}`,
+  onJob: async ({ id, from, prompt }) => {
+    // Respect Accept toggle
+    if (!$('accept').checked || !currentModel) return
+    // Solve and stream chunks back
+    worker.postMessage({ type:'generate', prompt, params: null, mesh: { id, to: from } })
+  },
+  onChunk: ({ id, from, text, done }) => {
+    // stream from other peer into UI
+    if (text) streamUpdate({ mode:'token', chunk:text, who:'mesh' })
+    if (done) streamUpdate({ mode:'end', who:'mesh' })
+  }
+})
+
+// Run
+async function run(askMesh) {
+  const prompt = $('prompt').value.trim()
+  if (!prompt) return
+  log('me', prompt)
+  $('prompt').value = ''
+
+  if (askMesh && mesh.count() > 0) {
+    // Start placeholder stream in UI
+    streamUpdate({ mode:'start', who:'mesh' })
+    const id = crypto.randomUUID()
+    mesh.broadcastJob({ id, prompt })
+    // OnChunk handler will append tokens; we'll end when first peer sends done
+  } else {
+    // Local
+    worker.postMessage({
+      type:'generate',
+      prompt,
+      params: {
+        max_new_tokens: +$('maxNew').value || 128,
+        temperature: +$('temp').value || 0.7,
+        top_p: +$('topp').value || 0.9
+      }
+    })
+  }
+}
+JS
+
+# Mesh (WebRTC + Socket.IO signaling). Star-ish mesh; we only need requester<->solver channel for chunks.
+cat > public/mesh.js <<'JS'
+export async function setupMesh({ onRoster, onJob, onChunk }) {
+  const io = await import('https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.esm.min.js')
+  const socket = io.io('/', { transports:['websocket'] })
+
+  const iceList = await fetch('/ice').then(r=>r.json()).catch(()=>({ iceServers:[{urls:'stun:stun.l.google.com:19302'}]}))
+  const peers = new Map() // id -> RTCPeerConnection + datachannel
+
+  function count(){ return peers.size }
+  function rosterUpdate(list) {
+    // Create/close peer connections as needed
+    const desired = new Set(list.filter(id => id !== socket.id))
+    // Remove stale
+    for (const id of peers.keys()) if (!desired.has(id)) closePeer(id)
+    // Add new
+    for (const id of desired) if (!peers.has(id)) createPeer(id, true)
+    onRoster?.(desired.size)
+  }
+
+  function createPeer(id, polite) {
+    const pc = new RTCPeerConnection(iceList)
+    const info = { pc, dc: null, ready: false }
+    peers.set(id, info)
+
+    pc.onicecandidate = e => {
+      if (e.candidate) socket.emit('signal', { to:id, data:{ candidate: e.candidate } })
+    }
+    pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') closePeer(id) }
+    pc.ondatachannel = (e) => {
+      info.dc = e.channel
+      attachDc(id, info.dc)
+    }
+    // Create our channel and offer if polite (initiator)
+    if (polite) {
+      info.dc = pc.createDataChannel('mesh')
+      attachDc(id, info.dc)
+      pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>{
+        socket.emit('signal', { to:id, data: pc.localDescription })
+      })
+    }
+    return info
+  }
+
+  function attachDc(id, dc) {
+    dc.onopen = () => { /* ready */ }
+    dc.onclose = () => closePeer(id)
+    dc.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data)
+        if (msg.type === 'job') onJob?.(msg.payload)
+        if (msg.type === 'chunk') onChunk?.(msg.payload)
+      } catch {}
+    }
+  }
+
+  function closePeer(id) {
+    const info = peers.get(id)
+    if (!info) return
+    try { info.dc?.close() } catch{}
+    try { info.pc?.close() } catch{}
+    peers.delete(id)
+  }
+
+  socket.on('roster', rosterUpdate)
+  socket.on('signal', async ({ from, data }) => {
+    let info = peers.get(from) || createPeer(from, false)
+    const pc = info.pc
+    if (data.type === 'offer') {
+      await pc.setRemoteDescription(new RTCSessionDescription(data))
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      socket.emit('signal', { to:from, data: pc.localDescription })
+    } else if (data.type === 'answer') {
+      await pc.setRemoteDescription(new RTCSessionDescription(data))
+    } else if (data.candidate) {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate || data))
+    }
+  })
+
+  function send(to, obj) {
+    const info = peers.get(to)
+    if (info?.dc?.readyState === 'open') info.dc.send(JSON.stringify(obj))
+  }
+  function broadcast(obj) {
+    for (const [id, info] of peers) {
+      if (info?.dc?.readyState === 'open') info.dc.send(JSON.stringify(obj))
+    }
+  }
+
+  function broadcastJob({ id, prompt }) {
+    broadcast({ type:'job', payload:{ id, prompt } })
+  }
+  // Solvers stream back
+  function sendChunk({ id, to, text, done }) {
+    send(to, { type:'chunk', payload:{ id, from: socket.id, text, done: !!done } })
+  }
+
+  return { count, broadcastJob, sendChunk }
+}
+JS
+
+# Worker: transformers.js pipeline (repo_id or custom base), streams locally or to mesh
+cat > public/worker.js <<'JS'
+import { pipeline, env, TextStreamer } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1'
+
+let generator = null
+let currentModelName = '(none)'
+const webgpu = typeof navigator !== 'undefined' && !!navigator.gpu
+postMessage({ type:'status', data:{ accel: webgpu ? 'WebGPU' : 'WASM/CPU' }})
+env.allowRemoteModels = true
+
+async function loadFromRepo(model) {
+  const repo = model.repo_id
+  const task = model.task || 'text-generation'
+  generator = await pipeline(task, repo, {
+    device: webgpu ? 'webgpu' : 'cpu'
+  })
+  currentModelName = model.name || repo
+  postMessage({ type:'status', data:{ model: currentModelName }})
+}
+
+onmessage = async (e) => {
+  const { type, model, prompt, params, mesh } = e.data
+  try {
+    if (type === 'load') {
+      postMessage({ type:'status', data:{ model:'loading…' }})
+      if (model.repo_id) await loadFromRepo(model)
+      else throw new Error('Model must specify repo_id for HF hub loading.')
+      postMessage({ type:'log', data:`✅ Loaded ${currentModelName}` })
+    } else if (type === 'generate') {
+      if (!generator) return postMessage({ type:'error', data:'Load a model first.' })
+      // local streaming target
+      if (!mesh) postMessage({ type:'stream', data:{ mode:'start', who:'ai' }})
+      const streamer = new TextStreamer(generator.tokenizer, {
+        skip_prompt: true,
+        callback_function: (text) => {
+          if (mesh) {
+            postMessage({ type:'mesh-chunk', data:{ id: mesh.id, to: mesh.to, text } })
+          } else {
+            postMessage({ type:'stream', data:{ mode:'token', chunk:text, who:'ai' }})
+          }
+        }
+      })
+      await generator(prompt, {
+        max_new_tokens: params?.max_new_tokens ?? 128,
+        temperature: params?.temperature ?? 0.7,
+        top_p: params?.top_p ?? 0.9,
+        streamer
+      })
+      if (mesh) {
+        postMessage({ type:'mesh-chunk', data:{ id: mesh.id, to: mesh.to, text:'', done:true } })
+      } else {
+        postMessage({ type:'stream', data:{ mode:'end', who:'ai' }})
+      }
+    }
+  } catch (err) {
+    postMessage({ type:'error', data: String(err?.message || err) })
+  }
+}
+JS
+
+# Bridge mesh-chunk messages from worker to mesh (runs in main thread)
+cat >> public/main.js <<'JS'
+
+// bridge mesh-chunk from worker to peers
+worker.addEventListener('message', (e) => {
+  if (e.data?.type === 'mesh-chunk') {
+    const { id, to, text, done } = e.data.data || {}
+    if (typeof mesh?.sendChunk === 'function') {
+      // first chunk? ensure UI stream started (once)
+      if (text && !currentAI) streamUpdate({ mode:'start', who:'mesh' })
+      mesh.sendChunk({ id, to, text, done })
+      if (done) streamUpdate({ mode:'end', who:'mesh' })
+    }
+  }
+})
+JS
+
+# (Optional) Service worker for app shell
+cat > public/sw.js <<'JS'
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open('shell-v1').then(c => c.addAll(['/', '/index.html', '/styles.css', '/main.js', '/mesh.js', '/worker.js'])))
+})
+self.addEventListener('fetch', (e) => {
+  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)))
+})
+JS
+
+echo "==> Installing dependencies"
+npm i
+
+echo
+echo "============================================================="
+echo " ✅ Done. Start the app:"
+echo "    cd ${ROOT} && npm run dev"
+echo " -> Open http://localhost:${PORT}"
+echo "    - Click 'Load Random HF Model' (or enter a repo like Xenova/distilgpt2)"
+echo "    - Type a prompt, choose 'Run Locally' or 'Ask Mesh'"
+echo "    - Open a second browser tab/device to see mesh streaming"
+echo "============================================================="
+
+
+---
+
+How it works (quick tour)
+
+Backend (server/server.js)
+
+Serves the static SPA
+
+/manifest returns a curated list of Hugging Face repo IDs known to be pre-converted for transformers.js (e.g., Xenova/distilgpt2, Xenova/tinyllama-1.1b-chat-v1.0). You can flip ENABLE_HF_SEARCH=true in .env to append a live HF search (best-effort).
+
+/ice returns STUN/TURN config (STUN by default; add TURN for production).
+
+Socket.IO handles mesh signaling. Browsers use WebRTC datachannels to exchange jobs and streamed chunks peer-to-peer.
+
+
+Frontend
+
+public/worker.js loads models directly from the HF Hub by repo_id using @huggingface/transformers in the browser. It runs on WebGPU where available; otherwise WASM/CPU. It streams tokens via TextStreamer.
+
+public/mesh.js builds a lightweight mesh overlay: each browser creates RTC datachannels with peers in the room (default global).
+
+Click Ask Mesh → broadcast a job {id, prompt}
+
+Peers with Accept remote jobs enabled locally compute and stream back tokens over the datachannel to your browser.
+
+First-to-finish wins by default (you’ll see multiple streams if several peers respond).
+
+
+
+Model size
+
+Your 20M-param domain models will load even faster than the curated examples (distilgpt2 is ~82M params; TinyLlama is ~1.1B).
+
+When you’re ready, export your custom model to ONNX (with past-kv) and publish to HF; just add its repo_id to CURATED or let the search pick it up.
+
+
+
+
+---
+
+Notes & production tips
+
+TURN server: For real-world mesh reliability behind strict NATs, deploy coturn and set ICE_SERVERS in .env to include your TURN URIs.
+
+HTTPS: WebRTC and WebGPU like secure contexts. In production, put this behind TLS (Caddy/Nginx). localhost is fine for dev.
+
+Custom 20M models: Export with:
+
+optimum-cli export onnx \
+  --model /path/to/your_model \
+  --task text-generation-with-past \
+  --opset 17 --weight-format int8 \
+  ./onnx-out/
+
+Push to HF (repo contains config.json, tokenizer.json, onnx/model.onnx). Then add {"repo_id":"your-org/your-20m-model","task":"text-generation"} to CURATED.
+
+Privacy: Prompts/answers never leave the user’s browser unless they choose to ask the mesh—then only peers receive the text (E2E over WebRTC).
+
+
+If you want me to add docker-compose for coturn + reverse proxy (TLS), or wire a room namespace for multi-tenant meshes, say the word and I’ll extend the script.
+

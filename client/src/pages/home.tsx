@@ -5,6 +5,7 @@ import { MeshNetwork } from "@/components/mesh-network";
 import { SystemLogs } from "@/components/system-logs";
 import { useMesh } from "@/hooks/use-mesh";
 import { useTransformers } from "@/hooks/use-transformers";
+import { debugNetworkConnectivity, testActualModelDownload } from "@/lib/network-debug";
 import type { ChatMessage } from "@shared/schema";
 
 export default function Home() {

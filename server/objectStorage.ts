@@ -53,17 +53,30 @@ export class ObjectStorageService {
     return paths;
   }
 
-  // Search for a model file from the public paths
+  // Search for a model file from storage (both public and private paths)
   async searchModelFile(filePath: string): Promise<File | null> {
+    // First try the private directory where models are stored
+    const privateDir = process.env.PRIVATE_OBJECT_DIR || "";
+    if (privateDir) {
+      const privatePath = `${privateDir}/${filePath}`;
+      const { bucketName, objectName } = parseObjectPath(privatePath);
+      const bucket = objectStorageClient.bucket(bucketName);
+      const file = bucket.file(objectName);
+
+      const [exists] = await file.exists();
+      if (exists) {
+        return file;
+      }
+    }
+
+    // Then try public paths as fallback
     for (const searchPath of this.getPublicObjectSearchPaths()) {
       const fullPath = `${searchPath}/${filePath}`;
 
-      // Full path format: /<bucket_name>/<object_name>
       const { bucketName, objectName } = parseObjectPath(fullPath);
       const bucket = objectStorageClient.bucket(bucketName);
       const file = bucket.file(objectName);
 
-      // Check if file exists
       const [exists] = await file.exists();
       if (exists) {
         return file;

@@ -88,7 +88,9 @@ export class ModelDownloaderService {
   // Download a specific file from a model
   private async downloadModelFile(modelId: string, filename: string): Promise<void> {
     const fileUrl = `https://huggingface.co/${modelId}/resolve/main/${filename}`;
-    const storagePath = `/models/${modelId}/${filename}`;
+    // Store in private directory for models
+    const privateDir = process.env.PRIVATE_OBJECT_DIR || "";
+    const storagePath = `${privateDir}/models/${modelId}/${filename}`;
 
     try {
       // Check if file already exists
@@ -119,9 +121,10 @@ export class ModelDownloaderService {
   // Check if a model is available in our storage
   async isModelAvailable(modelId: string): Promise<boolean> {
     const essentialFiles = ['config.json', 'tokenizer.json'];
+    const privateDir = process.env.PRIVATE_OBJECT_DIR || "";
     
     for (const file of essentialFiles) {
-      const storagePath = `/models/${modelId}/${file}`;
+      const storagePath = `${privateDir}/models/${modelId}/${file}`;
       if (!(await this.objectStorage.fileExists(storagePath))) {
         return false;
       }

@@ -8,11 +8,7 @@ import { z } from "zod";
 
 // Curated models known to work with transformers.js
 const CURATED_MODELS: HFModel[] = [
-  { repo_id: "Xenova/distilgpt2", task: "text-generation", name: "DistilGPT-2" },
-  { repo_id: "Xenova/gpt2", task: "text-generation", name: "GPT-2" },
-  { repo_id: "Xenova/tinyllama-1.1b-chat-v1.0", task: "text-generation", name: "TinyLlama 1.1B Chat" },
-  { repo_id: "Xenova/t5-small", task: "text2text-generation", name: "T5-Small" },
-  { repo_id: "Xenova/distilbert-base-uncased", task: "text-classification", name: "DistilBERT" },
+  { repo_id: "Xenova/tinyllama-1.1b-chat-v1.0", task: "text-generation", name: "TinyLlama 1.1B Chat" }
 ];
 
 export async function registerRoutes(app: Express): Promise<Server> {

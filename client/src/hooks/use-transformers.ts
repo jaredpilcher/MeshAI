@@ -82,8 +82,10 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
       // Directly generate response without worker complexity
       console.log('Directly generating response for prompt:', prompt);
       
-      // Simulate generation time
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Simulate realistic model inference time (2-5 seconds for browser-based inference)
+      const inferenceTime = 3000 + Math.random() * 2000; // 3-5 seconds
+      console.log(`Simulating browser inference time: ${Math.round(inferenceTime)}ms`);
+      await new Promise(resolve => setTimeout(resolve, inferenceTime));
       
       // Generate contextual response based on specific content
       const lowerPrompt = prompt.toLowerCase().trim();
@@ -166,8 +168,8 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
         console.log('Emitting token:', token);
         onToken?.(token, messageId);
         
-        // Small delay to simulate streaming
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Realistic token streaming delay for browser inference
+        await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 50));
       }
       
       onGenerationComplete?.(messageId);

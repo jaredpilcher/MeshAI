@@ -1,6 +1,7 @@
 import { pipeline, env } from '@huggingface/transformers';
 import { testTransformersBasic } from './transformers-test';
 import { MeshDemoFallback } from './mesh-demo-fallback';
+import { downloadVerifier } from './download-verification';
 
 // Configure transformers.js for browser-based inference
 env.allowRemoteModels = true;
@@ -39,10 +40,13 @@ export class TransformersWorker {
     this.isLoading = true;
 
     try {
-      console.log(`Loading real model from HuggingFace: ${model.repo_id}`);
-      console.log('This will download and cache the model in your browser...');
-
-      // Load the actual model using transformers.js with minimal configuration
+      console.log(`⬇️  STARTING COMPREHENSIVE DOWNLOAD VERIFICATION FOR: ${model.repo_id}`);
+      console.log(`📊 Expected model size: ~2.2GB for TinyLlama-1.1B`);
+      console.log(`⏱️  Expected download time: 30+ seconds on good connection`);
+      
+      // Start comprehensive download tracking
+      downloadVerifier.startDownloadTracking();
+      
       console.log('Creating pipeline for text generation...');
       
       // Use a try-catch for the pipeline creation to catch specific errors
@@ -57,7 +61,17 @@ export class TransformersWorker {
             }
           }
         });
-        console.log('Pipeline created successfully!');
+        console.log('✅ Pipeline created successfully!');
+        
+        // Run comprehensive download verification
+        const verificationResult = await downloadVerifier.verifyModelDownload(model.repo_id);
+        downloadVerifier.logVerificationReport(verificationResult);
+        
+        if (!verificationResult.actuallyDownloaded) {
+          console.error('🚨 VERIFICATION FAILED: Model did NOT actually download to browser');
+          console.error('🚨 Evidence suggests this was a fake/cached response, not real model data');
+          throw new Error('Model download verification failed - no actual model data received');
+        }
       } catch (pipelineError: any) {
         console.error('Pipeline creation failed:', pipelineError);
         console.error('Pipeline error details:', {

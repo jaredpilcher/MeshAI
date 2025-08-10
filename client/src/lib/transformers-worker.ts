@@ -5,11 +5,6 @@ env.allowRemoteModels = true;
 env.allowLocalModels = true;
 env.useBrowserCache = true;
 
-// Enable WebGPU with fallback to WASM/CPU
-if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
-  env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
-}
-
 // Real transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
   private generator: any = null;
@@ -31,40 +26,52 @@ export class TransformersWorker {
       console.log(`Loading real model from HuggingFace: ${model.repo_id}`);
       console.log('This will download and cache the model in your browser...');
 
-      // Load the actual model using transformers.js with basic configuration
+      // Load the actual model using transformers.js with minimal configuration
       console.log('Creating pipeline for text generation...');
-      this.generator = await pipeline('text-generation', model.repo_id, {
-        quantized: false, // Start with non-quantized to avoid compatibility issues
-        progress_callback: (progress: any) => {
-          console.log(`Model loading progress: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
-          if (progress.status) {
-            console.log(`Status: ${progress.status}`);
+      
+      // Use a try-catch for the pipeline creation to catch specific errors
+      try {
+        this.generator = await pipeline('text-generation', model.repo_id, {
+          progress_callback: (progress: any) => {
+            console.log(`Model loading progress: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
+            if (progress.status) {
+              console.log(`Status: ${progress.status}`);
+            }
           }
-        }
-      });
-      console.log('Pipeline created successfully!');
+        });
+        console.log('Pipeline created successfully!');
+      } catch (pipelineError: any) {
+        console.error('Pipeline creation failed:', pipelineError);
+        console.error('Pipeline error details:', {
+          message: pipelineError?.message,
+          name: pipelineError?.name,
+          stack: pipelineError?.stack
+        });
+        throw new Error(`Failed to create pipeline: ${pipelineError?.message || 'Unknown error'}`);
+      }
 
       this.currentModel = {
         name: model.name || model.repo_id,
         repo_id: model.repo_id,
         task: model.task || 'text-generation',
         loaded: true,
-        device: this.generator.model?.device || 'cpu'
+        device: this.generator?.model?.device || 'cpu'
       };
 
       console.log(`Real model loaded successfully: ${this.currentModel.name}`);
       console.log(`Running on device: ${this.currentModel.device}`);
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Real model loading failed:', error);
       console.error('Error details:', {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        name: error instanceof Error ? error.name : undefined
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name,
+        cause: error?.cause
       });
       this.currentModel = null;
       this.generator = null;
-      throw new Error(`Model loading failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Model loading failed: ${error?.message || 'Unknown error'}`);
     } finally {
       this.isLoading = false;
     }
@@ -113,9 +120,9 @@ export class TransformersWorker {
       
       return generatedText;
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Real AI inference error:', error);
-      throw new Error(`AI inference failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`AI inference failed: ${error?.message || 'Unknown error'}`);
     }
   }
 

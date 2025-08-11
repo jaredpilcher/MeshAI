@@ -13,8 +13,12 @@ env.allowLocalModels = true;
 env.useBrowserCache = true;
 
 // Override the remote URL to point to our server instead of HuggingFace
-env.remoteHost = window.location.origin;
-env.remotePathTemplate = '/models/{model}/{file}';
+// Set these immediately when the module loads
+Object.assign(env, {
+  remoteHost: window.location.origin,
+  remotePathTemplate: '/models/{model}/{file}',
+  remoteURL: `${window.location.origin}/models/`,
+});
 
 // Server-proxy transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
@@ -44,6 +48,19 @@ export class TransformersWorker {
       
       // Step 3: Load model from our server
       console.log('Creating pipeline from server-hosted model...');
+      
+      // Force the env settings right before pipeline creation
+      console.log('Setting transformers.js environment:', {
+        remoteHost: window.location.origin,
+        remotePathTemplate: '/models/{model}/{file}',
+        allowRemoteModels: true,
+      });
+      
+      env.remoteHost = window.location.origin;
+      env.remotePathTemplate = '/models/{model}/{file}';
+      env.allowRemoteModels = true;
+      env.allowLocalModels = true;
+      env.useBrowserCache = true;
       
       // Create pipeline with explicit type assertion to avoid complex union types
       this.generator = await pipeline(

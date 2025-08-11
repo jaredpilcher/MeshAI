@@ -7,12 +7,10 @@ import {
   type TextGenerationPipeline
 } from '@huggingface/transformers';
 
-// Configure transformers.js for direct HuggingFace loading ONLY (no local server proxy)
+// Configure transformers.js for direct HuggingFace loading
 env.allowRemoteModels = true;
-env.allowLocalModels = false;  // Disable local to prevent server proxy routing
+env.allowLocalModels = true;
 env.useBrowserCache = true;
-// Ensure no local model path is set
-delete (env as any).localModelPath;
 
 // Server-proxy transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
@@ -40,46 +38,49 @@ export class TransformersWorker {
       // Step 2: Load model directly from HuggingFace (no server proxy)
       console.log('Creating pipeline from HuggingFace directly...');
       
-      // Force direct HuggingFace loading (no server proxy)
-      console.log('Forcing direct HuggingFace loading - bypassing server proxy');
-      env.allowRemoteModels = true;   // Allow direct loading from HuggingFace
-      env.allowLocalModels = false;   // Disable local to prevent proxy routing
-      env.useBrowserCache = true;
-      // Remove any local model path to prevent server routing
-      delete (env as any).localModelPath;
-      delete (env as any).remoteHost;
-      delete (env as any).remotePathTemplate;
+      // Configure transformers.js for clean direct loading
+      console.log('Configuring transformers.js for direct HuggingFace loading');
       
-      console.log('Environment configured for direct HF loading only:', {
+      // Reset environment to defaults for direct loading
+      env.allowRemoteModels = true;
+      env.allowLocalModels = true;  // Keep true to avoid breaking internal logic
+      env.useBrowserCache = true;
+      
+      console.log('Environment configured:', {
         allowRemoteModels: env.allowRemoteModels,
         allowLocalModels: env.allowLocalModels,
-        useBrowserCache: env.useBrowserCache,
-        localModelPath: (env as any).localModelPath || 'undefined'
+        useBrowserCache: env.useBrowserCache
       });
       
       // Use the model's actual task (should be 'text-generation' or 'text2text-generation')
       const task = model.task || 'text-generation';
       console.log('[Loader] pipeline', task, model.repo_id);
       
-      // Create pipeline with the supported task for chat models only
+      // Create pipeline with minimal configuration for reliability
       console.log(`Creating ${task} pipeline for ${model.repo_id}`);
       this.generator = await pipeline(
         task, 
         model.repo_id, 
         {
-          quantized: true,
           progress_callback: (progress: any) => {
-            console.log(`Model loading: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
+            if (progress && progress.file) {
+              console.log(`Model loading: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
+            }
           }
         }
       ) as any;
       
       this.currentModel = model;
-      console.log('✅ Model loaded successfully from server proxy!');
+      console.log('✅ Model loaded successfully from HuggingFace!');
       
     } catch (error: any) {
       console.error('Model loading failed:', error);
-      throw new Error(`Failed to load model: ${error.message}`);
+      console.error('Full error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      throw new Error(`Failed to load model: ${error.message || 'Unknown error'}`);
     } finally {
       this.isLoading = false;
     }

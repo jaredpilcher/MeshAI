@@ -189,18 +189,62 @@ app.get('/api/models/:modelId/status', async (req, res) => {
   }
 });
 
-// Serve model files (for transformers.js local mode)
+// Serve model files (for transformers.js local mode) - proxy instead of redirect
 app.get('/models/*', async (req, res) => {
   const modelPath = req.path.replace('/models/', '');
   console.log('Model file request:', modelPath);
   
   try {
-    // For browser transformers.js, models are served from HuggingFace CDN
-    // This endpoint acknowledges the request but redirects to CDN
-    res.redirect(`https://huggingface.co/${modelPath.split('/').slice(0, 2).join('/')}/resolve/main/${modelPath.split('/').slice(2).join('/')}`);
+    // Build HuggingFace URL
+    const pathParts = modelPath.split('/');
+    const repoId = pathParts.slice(0, 2).join('/');
+    const filePath = pathParts.slice(2).join('/');
+    const hfUrl = `https://huggingface.co/${repoId}/resolve/main/${filePath}`;
+    
+    console.log(`Proxying model file: ${hfUrl}`);
+    
+    // Fetch from HuggingFace and stream directly to client
+    const response = await fetch(hfUrl);
+    
+    if (!response.ok) {
+      console.error(`HF fetch failed: ${response.status} ${response.statusText}`);
+      return res.status(404).json({ error: 'Model file not found' });
+    }
+    
+    // Copy headers from HuggingFace response
+    response.headers.forEach((value, key) => {
+      if (['content-type', 'content-length', 'cache-control', 'etag'].includes(key.toLowerCase())) {
+        res.set(key, value);
+      }
+    });
+    
+    // Stream the response body
+    if (response.body) {
+      const reader = response.body.getReader();
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          res.write(value);
+        }
+        res.end();
+      } catch (streamError) {
+        console.error('Stream error:', streamError);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Stream error' });
+        }
+      }
+    } else {
+      res.end();
+    }
+    
   } catch (e: any) {
     console.error('Model file serve error:', e);
-    res.status(404).json({ error: 'Model file not found' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Model file serve error' });
+    }
   }
 });
 

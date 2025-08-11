@@ -103,7 +103,8 @@ app.get('/api/manifest', async (_req, res) => {
   console.log('Manifest request received');
   
   try {
-    // Return a curated list of chat models confirmed to work with transformers.js
+    // Return a curated list of chat models verified to work with transformers.js
+    // Based on transformers.js documentation and verified ONNX compatibility
     const models = [
       {
         repo_id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -120,18 +121,18 @@ app.get('/api/manifest', async (_req, res) => {
         size: "~500MB"
       },
       {
-        repo_id: "microsoft/DialoGPT-medium",
-        name: "DialoGPT Medium",
+        repo_id: "onnx-community/Qwen2.5-0.5B-Instruct",
+        name: "Qwen2.5 0.5B Instruct",
         task: "text-generation",
-        description: "Medium-sized conversational model for better responses", 
-        size: "~1.2GB"
+        description: "Instruction-following chat model optimized for browsers",
+        size: "~500MB"
       },
       {
-        repo_id: "Xenova/gpt2",
-        name: "GPT2 Chat",
+        repo_id: "Xenova/distilgpt2",
+        name: "DistilGPT2",
         task: "text-generation",
-        description: "Classic conversational model, reliable and fast",
-        size: "~550MB"
+        description: "Lightweight model for quick text generation",
+        size: "~350MB"
       }
     ];
     

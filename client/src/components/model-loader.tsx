@@ -31,8 +31,19 @@ export function ModelLoader({ currentModel, onLoadModel, acceptJobs, onAcceptJob
         throw new Error('No models in manifest');
       }
       
-      const randomModel = manifest.models[Math.floor(Math.random() * manifest.models.length)];
-      console.log('Selected random model:', randomModel);
+      // Filter for chat-capable models (text-generation or text2text-generation)
+      const isChatCapable = (m: any) => 
+        m.task === 'text-generation' || m.task === 'text2text-generation';
+      
+      const chatCapableModels = manifest.models.filter(isChatCapable);
+      console.log('[ModelPicker] chatOnly count:', chatCapableModels.length);
+      
+      if (!chatCapableModels.length) {
+        throw new Error('No chat-capable models found');
+      }
+      
+      const randomModel = chatCapableModels[Math.floor(Math.random() * chatCapableModels.length)];
+      console.log('[ModelPicker] selected', randomModel.repo_id, randomModel.task, randomModel.name);
       setUiState(`Preparing ${randomModel.name}…`);
 
       // 1) Ask server to ensure it's downloaded/available

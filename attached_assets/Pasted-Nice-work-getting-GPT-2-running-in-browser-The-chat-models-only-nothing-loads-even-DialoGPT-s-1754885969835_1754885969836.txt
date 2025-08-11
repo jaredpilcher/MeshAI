@@ -1,0 +1,147 @@
+Nice work getting GPT-2 running in-browser. The “chat-models-only → nothing loads (even DialoGPT)” symptom almost always comes from how the filter defines “chat” and/or what task name you pass to transformers.js.
+
+The short diagnosis
+
+Your filter likely excludes valid causal LMs. GPT-2 and DialoGPT are chat-capable but expose the task as text-generation (and sometimes text2text-generation). If your “chat-only” toggle filters for a task like conversational or a tag/name containing “Chat”, you’ll end up with zero models even though the manifest is fine.
+
+Or you call an unsupported pipeline. If you changed the loader to use pipeline('conversational' | 'chat-completion', …), transformers.js won’t find that pipeline and the worker will sit silently. For transformers.js, chatty models still use text-generation (GPT-ish) or text2text-generation (T5-ish).
+
+
+That’s why GPT-2 worked before the filter, and after flipping to “chat only” the same model disappears or fails to load.
+
+
+---
+
+Quick confirmation (60 seconds)
+
+1. Open DevTools → Network. Toggle Chat models only, click Get Random Model.
+
+You should still see GET /api/manifest. If yes, your server is fine.
+
+If the UI then does nothing (no /api/models/... calls, no worker loads), your client filter produced an empty set or your loader rejected the model task.
+
+
+
+2. Open DevTools → Console. Add one log where you pick the model:
+
+
+
+console.log('[ModelPicker] selected', selected.repo_id, selected.task, selected.name);
+
+If it never logs, your filter returns none. If it logs a model but the worker never starts, your loader’s pipeline(task, …) is probably using a non-supported task string.
+
+
+---
+
+The fix (safe, minimal changes)
+
+1) Treat “chat-capable” as CAUSAL/TEXT2TEXT tasks
+
+Where you build the list for “chat models only”, replace your predicate with this:
+
+// shared/types-ish
+type HFTask = 'text-generation' | 'text2text-generation' /* ... other supported */;
+
+const isChatCapable = (m: { task?: string; name?: string }) =>
+  m.task === 'text-generation' || m.task === 'text2text-generation';
+
+// in model-loader or wherever you filter:
+const chatOnly = allModels.filter(isChatCapable);
+
+Don’t require conversational, chat-completion, a “Chat” suffix in the name, or a “chat” tag. Those will filter out GPT-2 and DialoGPT.
+
+2) Call a supported transformers.js pipeline
+
+In your loader/worker, make sure you instantiate the pipeline with supported task names:
+
+import { pipeline } from '@xenova/transformers';
+import { env } from '@xenova/transformers';
+
+// If you serve local files:
+env.localModelPath = '/models';      // your server route that serves model files
+// env.allowRemoteModels = false;    // optional hard block on internet fallback
+
+// model.task should be 'text-generation' or 'text2text-generation'
+const pipe = await pipeline(model.task as any, model.repo_id, { quantized: true });
+
+If you previously switched to something like:
+
+await pipeline('conversational', model.repo_id) // ❌ not supported in transformers.js
+// or
+await pipeline('chat-completion', model.repo_id) // ❌ not a transformers.js task
+
+…change it back to text-generation (DialoGPT/GPT-2) or text2text-generation (T5-like).
+
+3) Expand your manifest to include known chat-capable small models
+
+On the server (manifest endpoint), keep models whose task is supported, regardless of name:
+
+const CURATED_MODELS = [
+  { repo_id: 'Xenova/tinyllama-1.1b-chat-v1.0', task: 'text-generation', name: 'TinyLlama 1.1B Chat' },
+  { repo_id: 'Xenova/gpt2',                      task: 'text-generation', name: 'GPT-2' },
+  { repo_id: 'Xenova/DialoGPT-medium',           task: 'text-generation', name: 'DialoGPT Medium' },
+  // optional extras if you want variety:
+  // { repo_id: 'Xenova/Qwen2.5-0.5B-Instruct',  task: 'text-generation', name: 'Qwen2.5-0.5B Instruct' },
+  // { repo_id: 'Xenova/flan-t5-base',           task: 'text2text-generation', name: 'FLAN-T5 Base' },
+];
+
+4) Simple chat adapter (so anything “feels” chatty)
+
+Regardless of model, format your message history into a single prompt string for causal LMs:
+
+function toChatPrompt(history: {role:'user'|'assistant'|'system', content:string}[]) {
+  const sys = history.find(h => h.role === 'system')?.content?.trim();
+  const turns = history
+    .filter(h => h.role !== 'system')
+    .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content.trim()}`)
+    .join('\n');
+
+  const prefix = sys ? `System: ${sys}\n` : '';
+  return `${prefix}${turns}\nAssistant:`;
+}
+
+// then:
+const prompt = toChatPrompt(messages);
+const out = await pipe(prompt, { max_new_tokens: 128, temperature: 0.8 });
+
+This way GPT-2 and DialoGPT behave “chatty” without any special pipeline.
+
+
+---
+
+Guardrails so it doesn’t regress
+
+When “chat only” is on, log how many models remain:
+
+console.log('[ModelPicker] chatOnly count:', chatOnly.length);
+
+When you call pipeline, log the task and repo:
+
+console.log('[Loader] pipeline', model.task, model.repo_id);
+
+Show immediate UI state: “Fetching manifest…”, “Preparing…”, “Loading…”, “Ready”. If a filter empties the list or the loader throws, you’ll see it instantly.
+
+
+
+---
+
+Likely one-line bug (if you want the precise needle)
+
+If you show me these two snippets, I’ll point at the exact line to change:
+
+1. The predicate used when Chat models only is toggled (in your model list / loader click handler).
+
+
+2. The line where you call pipeline(task, repo_id, …) in your worker/loader.
+
+
+
+But 95% of the time, this is fixed by:
+
+letting text-generation | text2text-generation pass as “chat-capable” and
+
+using those exact task strings with transformers.js.
+
+
+You’re super close—this tweak should get DialoGPT (and GPT-2) back while keeping the “chat-only” experience.
+

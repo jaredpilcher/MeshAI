@@ -12,10 +12,10 @@ env.allowRemoteModels = true;
 env.allowLocalModels = true;
 env.useBrowserCache = true;
 
-// Override the remote URL to point to our server instead of HuggingFace
-// Use remoteURL instead of remotePathTemplate to avoid template issues
-env.remoteURL = `${window.location.origin}/models/`;
+// Configure transformers.js to use our server proxy
 env.remoteHost = window.location.origin;
+env.remotePathTemplate = `${window.location.origin}/models/{model}/`;
+env.allowRemoteModels = true;
 
 // Server-proxy transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
@@ -48,20 +48,24 @@ export class TransformersWorker {
       
       // Force the env settings right before pipeline creation
       console.log('Setting transformers.js environment:', {
-        remoteURL: `${window.location.origin}/models/`,
         remoteHost: window.location.origin,
+        remotePathTemplate: `${window.location.origin}/models/{model}/`,
         allowRemoteModels: true,
       });
       
-      env.remoteURL = `${window.location.origin}/models/`;
       env.remoteHost = window.location.origin;
+      env.remotePathTemplate = `${window.location.origin}/models/{model}/`;
       env.allowRemoteModels = true;
       env.allowLocalModels = true;
       env.useBrowserCache = true;
       
-      // Create pipeline with explicit type assertion to avoid complex union types
+      // Use the model's actual task (should be 'text-generation' or 'text2text-generation')
+      const task = model.task || 'text-generation';
+      console.log('[Loader] pipeline', task, model.repo_id);
+      
+      // Create pipeline with the supported task
       this.generator = await pipeline(
-        'text-generation', 
+        task, 
         model.repo_id, 
         {
           revision: 'main',
@@ -147,6 +151,18 @@ export class TransformersWorker {
     throw new Error(`Model download timeout after ${maxWaitTime / 1000}s`);
   }
 
+  // Chat adapter - formats messages into prompt for causal LMs
+  toChatPrompt(messages: {role: 'user'|'assistant'|'system', content: string}[]): string {
+    const sys = messages.find(h => h.role === 'system')?.content?.trim();
+    const turns = messages
+      .filter(h => h.role !== 'system')
+      .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content.trim()}`)
+      .join('\n');
+
+    const prefix = sys ? `System: ${sys}\n` : '';
+    return `${prefix}${turns}\nAssistant:`;
+  }
+
   async generateText(prompt: string, options: any = {}): Promise<string> {
     if (!this.generator) {
       throw new Error('No model loaded');
@@ -156,8 +172,8 @@ export class TransformersWorker {
       console.log('Generating text with real AI model...');
       
       const result = await this.generator(prompt, {
-        max_new_tokens: options.max_new_tokens || 50,
-        temperature: options.temperature || 0.7,
+        max_new_tokens: options.max_new_tokens || 128,
+        temperature: options.temperature || 0.8,
         do_sample: true,
         ...options
       });
@@ -171,6 +187,12 @@ export class TransformersWorker {
       console.error('Text generation failed:', error);
       throw new Error(`Generation failed: ${error.message}`);
     }
+  }
+
+  async generateChat(messages: {role: 'user'|'assistant'|'system', content: string}[], options: any = {}): Promise<string> {
+    const prompt = this.toChatPrompt(messages);
+    console.log('Chat prompt formatted:', prompt);
+    return this.generateText(prompt, options);
   }
 
   getStatus() {

@@ -103,41 +103,17 @@ app.get('/api/manifest', async (_req, res) => {
   console.log('Manifest request received');
   
   try {
-    // Return a curated list of chat models verified to work with transformers.js
-    // Based on transformers.js documentation and verified ONNX compatibility
-    const models = [
-      {
-        repo_id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        name: "TinyLlama 1.1B Chat",
-        task: "text-generation",
-        description: "Compact chat model perfect for conversational AI",
-        size: "~2.2GB"
-      },
-      {
-        repo_id: "microsoft/DialoGPT-small",
-        name: "DialoGPT Small",
-        task: "text-generation", 
-        description: "Conversational model trained for dialogue responses",
-        size: "~500MB"
-      },
-      {
-        repo_id: "onnx-community/Qwen2.5-0.5B-Instruct",
-        name: "Qwen2.5 0.5B Instruct",
-        task: "text-generation",
-        description: "Instruction-following chat model optimized for browsers",
-        size: "~500MB"
-      },
-      {
-        repo_id: "Xenova/distilgpt2",
-        name: "DistilGPT2",
-        task: "text-generation",
-        description: "Lightweight model for quick text generation",
-        size: "~350MB"
-      }
+    // Chat-capable models using text-generation or text2text-generation tasks
+    // As recommended for transformers.js compatibility
+    const CURATED_MODELS = [
+      { repo_id: 'Xenova/gpt2', task: 'text-generation', name: 'GPT-2', description: 'Classic causal LM, chat-capable', size: '~550MB' },
+      { repo_id: 'Xenova/DialoGPT-medium', task: 'text-generation', name: 'DialoGPT Medium', description: 'Conversational model', size: '~1.2GB' },
+      { repo_id: 'microsoft/DialoGPT-small', task: 'text-generation', name: 'DialoGPT Small', description: 'Lightweight conversational model', size: '~500MB' },
+      { repo_id: 'Xenova/distilgpt2', task: 'text-generation', name: 'DistilGPT-2', description: 'Compact causal LM', size: '~350MB' }
     ];
     
-    console.log(`Returning manifest with ${models.length} models`);
-    res.json({ models });
+    console.log(`[Manifest] Returning ${CURATED_MODELS.length} chat-capable models`);
+    res.json({ models: CURATED_MODELS });
   } catch (e: any) {
     console.error('Manifest error:', e);
     res.status(500).json({ error: e?.message ?? 'Failed to load manifest' });

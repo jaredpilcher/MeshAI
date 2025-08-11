@@ -1,0 +1,150 @@
+Short answer: the button likely isn’t wired to a visible state change and/or it’s waiting on a background model step that never completes (no polling, wrong path, or blocked download). Let’s verify fast and then I’ll give you a small patch that makes it obviously “alive” and actually loads TinyLlama.
+
+
+---
+
+Quick verification (2 minutes)
+
+On your client tab:
+
+1. Open DevTools → Network. Click Get Random Model.
+
+You should see GET /api/manifest immediately. If nothing appears, the button handler isn’t firing or it’s swallowing errors.
+
+
+
+2. If /api/manifest succeeds, check for POST /api/models/:modelId/download or any /models/ file requests.
+
+If you see no POST or no polling to /api/models/:id/status, the UI isn’t kicking off the download/status loop—so it looks like “nothing is happening.”
+
+If you see /models/ requests stalling or 404s, your client is pointed at /models/... but the server’s object store doesn’t have files yet (or ObjectStorageService paths aren’t set), so the worker/loader waits forever.
+
+
+
+
+On your server console:
+
+When you click the button, you should see REQUEST: GET /api/manifest.
+If not, the request never made it to your server (proxy misconfig or absolute URL in client).
+
+
+
+---
+
+Why it “does nothing”
+
+Common culprits in this setup:
+
+Button only sets state (selects a random model) but doesn’t (a) start a download on the server, (b) poll status, or (c) call the actual model loader. So you see no progress for minutes.
+
+No status/polling loop: you POST to /api/models/:id/download but never poll /api/models/:id/status to know when to call loadModel.
+
+Wrong model path for transformers.js: if your worker expects /models/... but ObjectStorageService isn’t returning files yet (or env flags force “local only”), transformers.js waits silently.
+
+Proxy bypass: if the client uses an absolute URL (e.g., http://localhost:8787/api/...) instead of '/api/...', Vite’s proxy won’t catch it, and CORS or 404s happen quietly.
+
+
+
+---
+
+Fix: make the button kick off download + poll + load (copy/paste)
+
+In your client/src/components/model-loader.tsx (or wherever the button lives), wire it like this:
+
+async function getRandomAndLoad() {
+  setUiState('Fetching manifest…'); // <-- visible feedback
+  try {
+    const { models } = await fetch('/api/manifest').then(r => r.json());
+    if (!models?.length) throw new Error('No models in manifest');
+    const selected = models[Math.floor(Math.random() * models.length)];
+    setSelectedModel(selected);
+    setUiState(`Preparing ${selected.name}…`);
+
+    // 1) Ask server to ensure it’s downloaded/available
+    await fetch(`/api/models/${encodeURIComponent(selected.repo_id)}/download`, { method: 'POST' });
+
+    // 2) Poll status until ready
+    let ready = false;
+    for (let i = 0; i < 120; i++) { // up to ~2 minutes
+      const s = await fetch(`/api/models/${encodeURIComponent(selected.repo_id)}/status`).then(r => r.json());
+      if (s.isAvailable) { ready = true; break; }
+      setUiState(`Downloading… ${s.isDownloading ? 'in progress' : 'queued'}`);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    if (!ready) throw new Error('Model not ready in time');
+
+    // 3) Load into the worker
+    setUiState('Loading into WebGPU…');
+    await loadModel(selected); // your existing hook: use-transformers/use-browserai
+    setUiState(`Ready: ${selected.name}`);
+  } catch (e: any) {
+    setUiState(`Error: ${e.message || e}`);
+    console.error(e);
+  }
+}
+
+Hook it to the button:
+
+<button onClick={getRandomAndLoad}>Get Random Model</button>
+<div className="text-sm text-muted-foreground">{uiState}</div>
+
+Make sure the client fetches relative URLs ('/api/...') so Vite’s proxy works.
+
+
+---
+
+If you’re using transformers.js (local files)
+
+Add this once (where you init the worker):
+
+import { env } from '@xenova/transformers';
+// serve models from your server’s /models route
+env.localModelPath = '/models';
+// if you want to block internet fallbacks:
+env.allowRemoteModels = false;
+
+Then confirm your server can actually serve files under /models/*. If your object storage isn’t populated yet, the download/status route I showed will populate it before load.
+
+Also ensure server env is set so ObjectStorageService knows where to look:
+
+PUBLIC_OBJECT_SEARCH_PATHS includes the directory where model files are stored,
+
+PRIVATE_OBJECT_DIR points to your local disk path for downloads.
+
+
+
+---
+
+If you switched to a pure browser runner (e.g., WebGPU “BrowserAI”)
+
+Skip the server download/poll step and just call:
+
+await loadModel('tinyllama-1.1b-chat'); // library-specific model id
+
+…but still show immediate UI state updates (Fetching → Loading → Ready), because initial model load can take 1–3 minutes on first run. Give users certainty.
+
+
+---
+
+Last mile checks
+
+Vite proxy in client/vite.config.ts:
+
+server: { proxy: { '/api': 'http://localhost:8787' } }
+
+Server logs should show:
+
+GET /api/manifest
+
+POST /api/models/<id>/download
+
+GET /api/models/<id>/status (repeating)
+
+GET /models/... (when the worker loads)
+
+
+In the browser Network tab you should see the same sequence, then a burst of /models/... file requests.
+
+
+If you want, paste me your current model-loader (and the console/network output when you click the button). I’ll pinpoint the exact missing line and hand you a tiny patch.
+

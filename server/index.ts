@@ -98,17 +98,77 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Setup Vite for frontend serving
-if (process.env.NODE_ENV === "development") {
-  await setupVite(app);
-} else {
-  serveStatic(app);
-}
+// Model download and status endpoints
+app.post('/api/models/:modelId/download', async (req, res) => {
+  const { modelId } = req.params;
+  console.log('Download request for model:', modelId);
+  
+  try {
+    // For now, simulate immediate availability for TinyLlama and other models
+    // In a real implementation, this would trigger actual model downloading
+    console.log(`Initiating download for model: ${modelId}`);
+    res.json({ 
+      success: true, 
+      message: `Download initiated for ${modelId}`,
+      modelId 
+    });
+  } catch (e: any) {
+    console.error('Download error:', e);
+    res.status(500).json({ error: e?.message ?? 'Download failed' });
+  }
+});
+
+app.get('/api/models/:modelId/status', async (req, res) => {
+  const { modelId } = req.params;
+  console.log('Status check for model:', modelId);
+  
+  try {
+    // For browser-based models, they're available immediately after download request
+    // In a real implementation, this would check actual download progress
+    const isAvailable = true; // Browser models are served from CDN
+    const isDownloading = false;
+    
+    console.log(`Model ${modelId} status: available=${isAvailable}, downloading=${isDownloading}`);
+    
+    res.json({
+      modelId,
+      isAvailable,
+      isDownloading,
+      progress: isAvailable ? 100 : 0,
+      message: isAvailable ? 'Model ready for loading' : 'Preparing model...'
+    });
+  } catch (e: any) {
+    console.error('Status check error:', e);
+    res.status(500).json({ error: e?.message ?? 'Status check failed' });
+  }
+});
+
+// Serve model files (for transformers.js local mode)
+app.get('/models/*', async (req, res) => {
+  const modelPath = req.path.replace('/models/', '');
+  console.log('Model file request:', modelPath);
+  
+  try {
+    // For browser transformers.js, models are served from HuggingFace CDN
+    // This endpoint acknowledges the request but redirects to CDN
+    res.redirect(`https://huggingface.co/${modelPath.split('/').slice(0, 2).join('/')}/resolve/main/${modelPath.split('/').slice(2).join('/')}`);
+  } catch (e: any) {
+    console.error('Model file serve error:', e);
+    res.status(404).json({ error: 'Model file not found' });
+  }
+});
 
 // Start clean API server with frontend
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Clean API server with frontend running on port ${PORT}`);
   console.log(`Frontend: http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
   console.log(`Version info: http://localhost:${PORT}/api/version`);
 });
+
+// Setup Vite for frontend serving after server creation
+if (process.env.NODE_ENV === "development") {
+  await setupVite(app, server);
+} else {
+  serveStatic(app);
+}

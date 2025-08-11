@@ -16,16 +16,73 @@ interface ModelLoaderProps {
 export function ModelLoader({ currentModel, onLoadModel, acceptJobs, onAcceptJobsChange }: ModelLoaderProps) {
   const [customRepo, setCustomRepo] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [uiState, setUiState] = useState('Ready');
 
   const handleLoadRandom = async () => {
     setIsLoading(true);
+    setUiState('Fetching manifest…');
+    
     try {
+      console.log('Starting getRandomAndLoad workflow');
       const response = await fetch('/api/manifest');
       const manifest = await response.json();
+      
+      if (!manifest?.models?.length) {
+        throw new Error('No models in manifest');
+      }
+      
       const randomModel = manifest.models[Math.floor(Math.random() * manifest.models.length)];
+      console.log('Selected random model:', randomModel);
+      setUiState(`Preparing ${randomModel.name}…`);
+
+      // 1) Ask server to ensure it's downloaded/available
+      console.log('Starting download for model:', randomModel.repo_id);
+      const downloadResponse = await fetch(`/api/models/${encodeURIComponent(randomModel.repo_id)}/download`, { 
+        method: 'POST' 
+      });
+      
+      if (!downloadResponse.ok) {
+        throw new Error(`Download failed: ${downloadResponse.statusText}`);
+      }
+
+      // 2) Poll status until ready
+      setUiState('Downloading model files…');
+      let ready = false;
+      for (let i = 0; i < 120; i++) { // up to ~2 minutes
+        console.log(`Polling model status, attempt ${i + 1}`);
+        const statusResponse = await fetch(`/api/models/${encodeURIComponent(randomModel.repo_id)}/status`);
+        
+        if (!statusResponse.ok) {
+          console.warn('Status check failed:', statusResponse.statusText);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        const status = await statusResponse.json();
+        console.log('Model status:', status);
+        
+        if (status.isAvailable) { 
+          ready = true; 
+          break; 
+        }
+        
+        setUiState(`Downloading… ${status.isDownloading ? 'in progress' : 'queued'}`);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      
+      if (!ready) {
+        throw new Error('Model not ready in time');
+      }
+
+      // 3) Load into the worker
+      setUiState('Loading into WebGPU…');
+      console.log('Loading model into worker:', randomModel);
       await onLoadModel(randomModel);
-    } catch (error) {
+      setUiState(`Ready: ${randomModel.name}`);
+      
+    } catch (error: any) {
       console.error('Failed to load random model:', error);
+      setUiState(`Error: ${error.message || error}`);
     } finally {
       setIsLoading(false);
     }
@@ -71,8 +128,11 @@ export function ModelLoader({ currentModel, onLoadModel, acceptJobs, onAcceptJob
                 disabled={isLoading}
                 className="w-full bg-gradient-to-r from-chart-1 to-blue-600 hover:from-chart-1/80 hover:to-blue-600/80"
               >
-                🎲 Load Random Model
+                {isLoading ? '⏳' : '🎲'} Load Random Model
               </Button>
+              <div className="text-sm text-muted-foreground mt-2 min-h-[20px]">
+                {uiState}
+              </div>
             </div>
             
             <div>

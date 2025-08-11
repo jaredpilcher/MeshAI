@@ -1,0 +1,120 @@
+You moved fast—nice. I pulled up the repo and I can confirm the monorepo layout is there (`client/`, `server/`, `shared/`), plus the Tailwind/Drizzle bits and root configs (`tailwind.config.ts`, `tsconfig.json`, `vite.config.ts`, etc.). That’s the right skeleton to get an end-to-end app running. ([GitHub][1])
+
+Quick heads-up: from my side I can list the tree but can’t open individual file contents in this environment (GitHub sometimes blocks that view). So below is a **tight verification + fix checklist** you can run locally—if any step fails, I’ve included the exact patch to apply. This will get you to a clean, working **frontend + backend** with one command.
+
+# Why this matters (the “why”)
+
+We want three things to be unquestionably true:
+
+1. one command runs both apps,
+2. the client can talk to the server in dev (proxy) and prod (reverse proxy),
+3. the types and providers don’t break builds or calls.
+
+# 10-minute verification loop
+
+Run these in the repo root and compare with the expected result.
+
+1. Node & workspace sanity
+
+* `node -v` → **v20.x** (or v22.x). If not, use Node 20 LTS.
+* `npm i` → completes without peer-dep warnings that stop install.
+* `npm run dev` → should spin up **client on :5173** and **server on :8787** (or your PORT).
+
+  * If only one process starts, your **root `package.json` scripts/workspaces** are off. Ensure it looks like this:
+
+  ```json
+  {
+    "workspaces": ["client","server","shared"],
+    "scripts": {
+      "dev": "concurrently -n CLIENT,SERVER -c auto \"npm:dev --workspace=client\" \"npm:dev --workspace=server\"",
+      "build": "npm run build -w client && npm run build -w server",
+      "typecheck": "tsc -b",
+      "start": "node server/dist/index.js"
+    },
+    "devDependencies": { "concurrently": "^8.2.2", "typescript": "^5.5.4" }
+  }
+  ```
+
+2. Server health (no models or keys needed)
+
+* `curl http://localhost:8787/api/health` → `{"ok":true}`
+
+  * If 404/ECONNREFUSED: your **server port** or **listen** isn’t set. Confirm `PORT=8787` in `server/.env` or default in `src/index.ts`, and that `app.listen(PORT)` is present.
+
+3. Chat stub works (proves wiring end-to-end)
+
+* `curl -X POST http://localhost:8787/api/chat -H 'Content-Type: application/json' -d '{"messages":[{"role":"user","content":"ping"}],"provider":"stub"}'`
+  → `{"content":"Stub reply: ping"}`
+
+  * If 400 with a schema error, align your Zod schema and the payload exactly.
+
+4. Client → API in dev (proxy)
+
+* Open `http://localhost:5173`, send a message. Expect two log lines:
+  `You: <text>` and `AI: Stub reply: <text...>`
+
+  * If the UI errors: check `client/vite.config.ts` has
+
+    ```ts
+    server: { port: 5173, proxy: { '/api': 'http://localhost:8787' } }
+    ```
+  * If the browser console shows CORS errors, your server either lacks `cors()` or the client is bypassing the proxy (absolute URLs in `fetch`). Keep client requests relative: `fetch('/api/chat', ...)`.
+
+5. Shared types really shared
+
+* `npm run typecheck` → should succeed.
+
+  * If it can’t resolve `@shared/*`, add in **client/server tsconfig**:
+
+    ```json
+    "compilerOptions": { "baseUrl": ".", "paths": { "@shared/*": ["../shared/*"] } }
+    ```
+  * And make **shared/tsconfig.json** a composite build with `"declaration": true`, `"outDir": "dist"`.
+
+6. Real providers flip on cleanly
+
+* Put keys in `server/.env` (and **commit only `.env.example`**):
+
+  ```
+  PORT=8787
+  OPENAI_API_KEY=
+  OPENROUTER_API_KEY=
+  HF_TOKEN=
+  ```
+* Restart server, POST to `/api/chat` with `"provider":"openai"` (or `"openrouter"` / `"hf"`).
+
+  * If you get a 401/403 from providers, keys/scopes are wrong.
+  * If you get a response but **empty content**, map the provider JSON correctly (e.g., `json.choices?.[0]?.message?.content`).
+
+# Common deltas I still see after a first pass
+
+Check each of these quickly; they’re the usual final 10%.
+
+* **Missing `.env.example`** in `server/`. Add it so contributors know required vars. The repo tree shows no `.env.example` at root; verify it exists under `server/`. ([GitHub][1])
+* **Root README quickstart.** Add a 30-second “Getting Started” with the exact commands above and expected outputs. (Repo currently has config files and folders but no README callouts for how to run both apps together.) ([GitHub][1])
+* **Hard-coded absolute API URLs** in the client. Make sure all client requests are `fetch('/api/...')` so Vite’s proxy handles dev.
+* **ESM vs CJS mismatch.** In `server/package.json`, ensure `"type": "module"`, and import style matches. If you prefer CJS, remove that and use `require` consistently.
+* **Zod schema strictness.** Your `messages` array should accept exactly `role ∈ {system,user,assistant}` and `content: string`. If you later add `tool` messages, update the schema.
+* **Unhandled provider errors.** Wrap each provider call with try/catch and return `{error}` plus proper HTTP codes. You likely did this—but confirm that 5xx is used for upstream failures and 4xx for bad input.
+* **Drizzle present but unused.** If `drizzle.config.ts` exists but no migrations or `DATABASE_URL`, either add a first migration or remove Drizzle until you need it; it confuses contributors. ([GitHub][1])
+
+# Production switch (quick)
+
+* `npm run build` at root.
+* Serve the client statics behind a reverse proxy, and route `/api/*` to the server process/container.
+* Add `HEALTHCHECK` (Docker) or an uptime monitor that calls `/api/health`.
+
+# Optional polish (fast wins)
+
+* **/api/version** endpoint that returns `{commit, time, providerModes}` so you can verify deploys instantly.
+* **Playwright smoke test** (skipped in CI if no keys):
+
+  1. open app → send message with provider `stub` → expect echo,
+  2. if `OPENAI_API_KEY` present, flip provider and assert a non-empty response.
+* **Turn on strict TS** across workspaces and add `tsconfig.references` at the root so `tsc -b` builds `shared` before `server`/`client`.
+
+---
+
+If any of the verification steps above fail, paste me the exact console/server logs and I’ll give you a tiny, targeted patch. From what I can see in the current tree, you’re 90% of the way there—the last 10% is just getting the proxy, env, and provider plumbing airtight. And once you’re green on the stub path, the “mesh” layer (WebRTC/WebGPU) becomes a safe next increment instead of a moving target.
+
+[1]: https://github.com/jaredpilcher/MeshAI "GitHub - jaredpilcher/MeshAI"

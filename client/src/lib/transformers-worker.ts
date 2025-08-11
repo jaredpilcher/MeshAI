@@ -7,17 +7,10 @@ import {
   type TextGenerationPipeline
 } from '@huggingface/transformers';
 
-// Configure transformers.js to use our server proxy
+// Configure transformers.js for direct HuggingFace loading (more reliable)
 env.allowRemoteModels = true;
 env.allowLocalModels = true;
 env.useBrowserCache = true;
-
-// Configure transformers.js for chat-only models via server proxy
-env.localModelPath = '/models';
-env.remoteHost = window.location.origin; 
-env.remotePathTemplate = `${window.location.origin}/models/{model}/`;
-env.allowRemoteModels = true;
-env.allowLocalModels = true;
 
 // Server-proxy transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
@@ -39,39 +32,35 @@ export class TransformersWorker {
     try {
       console.log(`🔄 Loading model through server proxy: ${model.repo_id}`);
       
-      // Step 1: Trigger model download on server if needed
-      await this.ensureModelDownloaded(model.repo_id);
-      
-      // Step 2: Wait for download completion
-      await this.waitForModelReady(model.repo_id);
+      // Step 1: Verify model is in allowlist (but load directly from HF)
+      await this.verifyModelAllowed(model.repo_id);
       
       // Step 3: Load model from our server
       console.log('Creating pipeline from server-hosted model...');
       
-      // Force the env settings right before pipeline creation
-      console.log('Setting transformers.js environment:', {
-        remoteHost: window.location.origin,
-        remotePathTemplate: `${window.location.origin}/models/{model}/`,
-        allowRemoteModels: true,
-      });
-      
-      env.remoteHost = window.location.origin;
-      env.remotePathTemplate = `${window.location.origin}/models/{model}/`;
-      env.allowRemoteModels = true;
+      // Configure transformers.js for direct loading from HuggingFace
+      console.log('Configuring transformers.js for direct HF loading');
+      env.allowRemoteModels = true;   // Allow direct loading from HuggingFace
       env.allowLocalModels = true;
       env.useBrowserCache = true;
+      
+      console.log('Environment configured for direct HF loading:', {
+        allowRemoteModels: env.allowRemoteModels,
+        allowLocalModels: env.allowLocalModels,
+        useBrowserCache: env.useBrowserCache
+      });
       
       // Use the model's actual task (should be 'text-generation' or 'text2text-generation')
       const task = model.task || 'text-generation';
       console.log('[Loader] pipeline', task, model.repo_id);
       
-      // Create pipeline with the supported task
+      // Create pipeline with the supported task for chat models only
+      console.log(`Creating ${task} pipeline for ${model.repo_id}`);
       this.generator = await pipeline(
         task, 
         model.repo_id, 
         {
-          revision: 'main',
-          cache_dir: './.cache',
+          quantized: true,
           progress_callback: (progress: any) => {
             console.log(`Model loading: ${progress.file} - ${Math.round(progress.progress || 0)}%`);
           }
@@ -89,9 +78,9 @@ export class TransformersWorker {
     }
   }
 
-  private async ensureModelDownloaded(modelId: string): Promise<void> {
+  private async verifyModelAllowed(modelId: string): Promise<void> {
     try {
-      console.log(`Triggering server download for: ${modelId}`);
+      console.log(`Verifying model is in allowlist: ${modelId}`);
       
       const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/download`, {
         method: 'POST',
@@ -101,14 +90,15 @@ export class TransformersWorker {
       });
       
       if (!response.ok) {
-        throw new Error(`Server download failed: ${response.statusText}`);
+        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(`Model not allowed: ${error.error || response.statusText}`);
       }
       
       const result = await response.json();
-      console.log('Server download status:', result);
+      console.log('Model allowlist verification:', result);
       
     } catch (error) {
-      console.error('Failed to trigger server download:', error);
+      console.error('Model allowlist verification failed:', error);
       throw error;
     }
   }

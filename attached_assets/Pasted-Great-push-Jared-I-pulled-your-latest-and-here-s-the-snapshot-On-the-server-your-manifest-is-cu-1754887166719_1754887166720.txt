@@ -1,0 +1,106 @@
+Great push, Jared. I pulled your latest and here’s the snapshot:
+
+On the server, your manifest is currently returning a single curated model: Xenova/tinyllama-1.1b-chat-v1.0 with task text-generation. So the API is effectively “chat-only” already. 
+
+Whether the app is truly “chat-only” depends on the client: if the UI still lets you type any HF repo (or you keep non-chat entries in memory), users can still attempt to load non-chat models—even if they won’t show up in the manifest.
+
+
+If your goal is hard chat-only (end-to-end), do the two things below.
+
+
+---
+
+Why this matters
+
+“Chat” isn’t a first-class transformers.js pipeline; chatty models usually expose text-generation (GPT-like) or text2text-generation (T5-like). If you enforce “models with ‘Chat’ in the name” or a non-existent pipeline (e.g., conversational), you’ll filter out valid chat-capable models and nothing will load. The safest definition is “chat-capable tasks”: text-generation | text2text-generation.
+
+
+---
+
+Make it unequivocally chat-only
+
+1) Server: whitelist chat-capable models and reject others
+
+Keep a curated allowlist and block /api/models/:modelId/download unless it’s on that list.
+
+// server/routes.ts (top)
+const CURATED_MODELS: HFModel[] = [
+  { repo_id: "Xenova/tinyllama-1.1b-chat-v1.0", task: "text-generation", name: "TinyLlama 1.1B Chat" },
+  // (Optional) more chat-capable options you approve:
+  // { repo_id: "Xenova/DialoGPT-medium", task: "text-generation", name: "DialoGPT Medium" },
+  // { repo_id: "Xenova/flan-t5-base", task: "text2text-generation", name: "FLAN-T5 Base" },
+];
+
+const ALLOW = new Set(CURATED_MODELS.map(m => m.repo_id));
+
+// server/routes.ts (download route)
+app.post("/api/models/:modelId/download", async (req, res) => {
+  try {
+    const modelId = req.params.modelId;
+    if (!ALLOW.has(modelId)) {
+      return res.status(403).json({ error: "Model not allowed (chat-only policy)" });
+    }
+    // ...existing logic...
+  } catch (err) {
+    // ...
+  }
+});
+
+This guarantees only your chat list can be downloaded/served—no matter what the client tries. Your current manifest already returns TinyLlama chat only, so you’re close. This step just enforces it across all routes. 
+
+2) Client: treat “chat-only” as chat-capable tasks, not names
+
+In whatever selects “chat models” (model picker / loader), use a predicate like:
+
+const isChatCapable = (m: { task?: string }) =>
+  m?.task === 'text-generation' || m?.task === 'text2text-generation';
+
+const chatOnly = manifest.models.filter(isChatCapable);
+
+If you currently filter by model name containing “Chat” or try to use a pipeline like 'conversational', you’ll end up with an empty set and it will look like the button “does nothing.”
+
+Also, ensure your loader still calls a supported transformers.js pipeline:
+
+// OK for GPT-ish and DialoGPT-ish models
+const pipe = await pipeline('text-generation', model.repo_id, { quantized: true });
+
+// OK for T5/FLAN style
+// const pipe = await pipeline('text2text-generation', model.repo_id, { quantized: true });
+
+(Using 'conversational' or 'chat-completion' will fail silently.)
+
+
+---
+
+Quality-of-life safeguards
+
+UI feedback: When you click Get Random Model, immediately show “Fetching manifest…”, “Preparing…”, “Downloading…”, “Loading…”, “Ready”. If the chat filter empties the list, show “No chat-capable models found.”
+
+Relative URLs: Keep all client fetches relative (/api/...) so the Vite proxy helps you in dev; otherwise you’ll chase phantom CORS issues.
+
+Transformers local path: If you serve models locally, set this once:
+
+import { env } from '@xenova/transformers';
+env.localModelPath = '/models';
+// env.allowRemoteModels = false; // optional hard block
+
+Tests: In DevTools → Network, the sequence for one click should be: GET /api/manifest → POST /api/models/:id/download → repeated GET /api/models/:id/status → a burst of GET /models/... (actual model shards) → worker loads.
+
+
+
+---
+
+Answering your direct question
+
+Are we only using chat models right now?
+On the server, your manifest currently exposes only Xenova/tinyllama-1.1b-chat-v1.0, so yes, the API is effectively chat-only. Client behavior could still allow non-chat repos if you accept free-form input, so add the allowlist check above to make it ironclad. 
+
+Can we make it strictly chat-only end-to-end? How?
+Yes. Whitelist on the server (reject others in the download route), and in the client define “chat-only” as text-generation | text2text-generation and use the supported pipelines shown above.
+
+
+
+---
+
+Want me to open a PR that (1) adds the server allowlist guard, (2) updates the client predicate and loader calls, and (3) adds a tiny smoke test? Quick sanity check for you: do you want “chat-only” to include DialoGPT/GPT-2 (chat-capable) or only models with “instruct/chat” branding (e.g., TinyLlama-chat, Qwen-instruct)?
+

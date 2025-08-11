@@ -31,14 +31,16 @@ export function ModelLoader({ currentModel, onLoadModel, acceptJobs, onAcceptJob
         throw new Error('No models in manifest');
       }
       
-      // Filter for chat-capable models (text-generation or text2text-generation)
+      // Define chat-capable as task-based (not name-based) for transformers.js compatibility  
       const isChatCapable = (m: any) => 
-        m.task === 'text-generation' || m.task === 'text2text-generation';
+        m?.task === 'text-generation' || m?.task === 'text2text-generation';
       
       const chatCapableModels = manifest.models.filter(isChatCapable);
       console.log('[ModelPicker] chatOnly count:', chatCapableModels.length);
+      console.log('[ModelPicker] available tasks:', [...new Set(manifest.models.map((m: any) => m.task))]);
       
       if (!chatCapableModels.length) {
+        console.error('No chat-capable models found in manifest:', manifest.models);
         throw new Error('No chat-capable models found');
       }
       

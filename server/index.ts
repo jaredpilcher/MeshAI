@@ -98,40 +98,49 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Model manifest endpoint
+// Chat-only model allowlist - strictly enforced end-to-end
+const CURATED_CHAT_MODELS = [
+  { repo_id: "Xenova/gpt2", task: "text-generation", name: "GPT-2", description: "Classic chat-capable causal LM", size: "~550MB" },
+  { repo_id: "Xenova/DialoGPT-medium", task: "text-generation", name: "DialoGPT Medium", description: "Conversational model", size: "~1.2GB" },
+  { repo_id: "Xenova/DialoGPT-small", task: "text-generation", name: "DialoGPT Small", description: "Lightweight conversational model", size: "~500MB" },
+  { repo_id: "Xenova/distilgpt2", task: "text-generation", name: "DistilGPT-2", description: "Compact chat-capable causal LM", size: "~350MB" }
+];
+
+const CHAT_MODEL_ALLOWLIST = new Set(CURATED_CHAT_MODELS.map(m => m.repo_id));
+
+// Model manifest endpoint - returns only chat-capable models
 app.get('/api/manifest', async (_req, res) => {
   console.log('Manifest request received');
   
   try {
-    // Chat-capable models using text-generation or text2text-generation tasks
-    // As recommended for transformers.js compatibility
-    const CURATED_MODELS = [
-      { repo_id: 'Xenova/gpt2', task: 'text-generation', name: 'GPT-2', description: 'Classic causal LM, chat-capable', size: '~550MB' },
-      { repo_id: 'Xenova/DialoGPT-medium', task: 'text-generation', name: 'DialoGPT Medium', description: 'Conversational model', size: '~1.2GB' },
-      { repo_id: 'microsoft/DialoGPT-small', task: 'text-generation', name: 'DialoGPT Small', description: 'Lightweight conversational model', size: '~500MB' },
-      { repo_id: 'Xenova/distilgpt2', task: 'text-generation', name: 'DistilGPT-2', description: 'Compact causal LM', size: '~350MB' }
-    ];
-    
-    console.log(`[Manifest] Returning ${CURATED_MODELS.length} chat-capable models`);
-    res.json({ models: CURATED_MODELS });
+    console.log(`[Manifest] Returning ${CURATED_CHAT_MODELS.length} chat-only models`);
+    res.json({ models: CURATED_CHAT_MODELS });
   } catch (e: any) {
     console.error('Manifest error:', e);
     res.status(500).json({ error: e?.message ?? 'Failed to load manifest' });
   }
 });
 
-// Model download and status endpoints
+// Model download - strictly enforces chat-only allowlist
 app.post('/api/models/:modelId/download', async (req, res) => {
   const { modelId } = req.params;
   console.log('Download request for model:', modelId);
   
   try {
-    // For now, simulate immediate availability for TinyLlama and other models
-    // In a real implementation, this would trigger actual model downloading
-    console.log(`Initiating download for model: ${modelId}`);
+    // Enforce chat-only policy - reject non-allowlisted models
+    if (!CHAT_MODEL_ALLOWLIST.has(modelId)) {
+      console.log(`❌ Model ${modelId} rejected - not in chat-only allowlist`);
+      return res.status(403).json({ 
+        error: "Model not allowed (chat-only policy)",
+        allowedModels: Array.from(CHAT_MODEL_ALLOWLIST)
+      });
+    }
+    
+    console.log(`✅ Model ${modelId} approved for download`);
+    console.log(`Initiating download for chat model: ${modelId}`);
     res.json({ 
       success: true, 
-      message: `Download initiated for ${modelId}`,
+      message: `Download initiated for chat model ${modelId}`,
       modelId 
     });
   } catch (e: any) {

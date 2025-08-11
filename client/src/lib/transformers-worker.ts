@@ -12,10 +12,12 @@ env.allowRemoteModels = true;
 env.allowLocalModels = true;
 env.useBrowserCache = true;
 
-// Configure transformers.js to use our server proxy
-env.remoteHost = window.location.origin;
+// Configure transformers.js for chat-only models via server proxy
+env.localModelPath = '/models';
+env.remoteHost = window.location.origin; 
 env.remotePathTemplate = `${window.location.origin}/models/{model}/`;
 env.allowRemoteModels = true;
+env.allowLocalModels = true;
 
 // Server-proxy transformers.js implementation for browser-based AI inference
 export class TransformersWorker {

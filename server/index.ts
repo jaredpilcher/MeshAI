@@ -98,12 +98,11 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Chat-only model allowlist - strictly enforced end-to-end
+// Chat-only model allowlist - ONLY instruction/chat-tuned models (removing base models)
 const CURATED_CHAT_MODELS = [
-  { repo_id: "Xenova/gpt2", task: "text-generation", name: "GPT-2", description: "Classic chat-capable causal LM", size: "~550MB" },
-  { repo_id: "Xenova/DialoGPT-medium", task: "text-generation", name: "DialoGPT Medium", description: "Conversational model", size: "~1.2GB" },
-  { repo_id: "Xenova/DialoGPT-small", task: "text-generation", name: "DialoGPT Small", description: "Lightweight conversational model", size: "~500MB" },
-  { repo_id: "Xenova/distilgpt2", task: "text-generation", name: "DistilGPT-2", description: "Compact chat-capable causal LM", size: "~350MB" }
+  { repo_id: "Xenova/tinyllama-1.1b-chat-v1.0", task: "text-generation", name: "TinyLlama 1.1B Chat", description: "Instruction-tuned chat model", size: "~1.1GB" },
+  { repo_id: "Xenova/DialoGPT-medium", task: "text-generation", name: "DialoGPT Medium", description: "Conversational chat model", size: "~1.2GB" },
+  { repo_id: "Xenova/DialoGPT-small", task: "text-generation", name: "DialoGPT Small", description: "Lightweight conversational model", size: "~500MB" }
 ];
 
 const CHAT_MODEL_ALLOWLIST = new Set(CURATED_CHAT_MODELS.map(m => m.repo_id));
@@ -203,24 +202,11 @@ app.get('/models/*', async (req, res) => {
       }
     });
     
-    // Stream the response body
+    // Stream the response body using Node.js streams
     if (response.body) {
-      const reader = response.body.getReader();
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          res.write(value);
-        }
-        res.end();
-      } catch (streamError) {
-        console.error('Stream error:', streamError);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Stream error' });
-        }
-      }
+      // Convert Web ReadableStream to Node.js readable
+      const nodeReader = response.body as any;
+      nodeReader.pipe(res);
     } else {
       res.end();
     }

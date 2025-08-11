@@ -1,0 +1,148 @@
+You’re close, and your instinct is right: if we only allow chat-/instruct-tuned models, you’ll stop fighting GPT-2’s behavior. Let’s hard-lock the stack to chat models end-to-end and make the UI reflect that.
+
+I can’t pull from here, but below is a tight patch plan you can drop in. It makes the server an allowlist for chat models and ensures the client only ever picks from that list.
+
+
+---
+
+1) Server: enforce a chat-only allowlist
+
+In server/routes.ts keep only chat/instruct models in the manifest and block downloads for anything else.
+
+// Top of routes.ts
+type HFTask = 'text-generation' | 'text2text-generation';
+
+const CURATED_MODELS: HFModel[] = [
+  // ✅ definitely chat-tuned and known to work with transformers.js
+  { repo_id: 'Xenova/tinyllama-1.1b-chat-v1.0', task: 'text-generation', name: 'TinyLlama 1.1B Chat' },
+
+  // Optional: include more *chat/instruct* models you’ve confirmed locally.
+  // Examples (add only if you’ve verified they exist and load in your env):
+  // { repo_id: 'Xenova/Qwen2.5-0.5B-Instruct', task: 'text-generation', name: 'Qwen2.5 0.5B Instruct' },
+  // { repo_id: 'Xenova/flan-t5-base',          task: 'text2text-generation', name: 'FLAN-T5 Base (Instr.)' },
+];
+
+const ALLOW = new Set(CURATED_MODELS.map(m => m.repo_id));
+
+Keep the manifest simple:
+
+app.get('/api/manifest', (_req, res) => {
+  res.json({ models: CURATED_MODELS });
+});
+
+Block non-allowlisted models at download time:
+
+app.post('/api/models/:modelId/download', async (req, res) => {
+  const modelId = req.params.modelId;
+  if (!ALLOW.has(modelId)) {
+    return res.status(403).json({ error: 'Model not allowed (chat-only policy)' });
+  }
+  // ... existing download kick-off ...
+});
+
+> Result: even if the client tries a random HF repo, the server refuses it. Only chat/instruct models make it to /models/*.
+
+
+
+
+---
+
+2) Client: only show chat-capable options
+
+Where you pick a model (e.g., in model-loader.tsx or the “Get Random Model” handler), keep only chat-capable tasks:
+
+const isChatCapable = (m: { task?: string }) =>
+  m?.task === 'text-generation' || m?.task === 'text2text-generation';
+
+const manifest = await fetch('/api/manifest').then(r => r.json());
+const chatOnly = (manifest.models || []).filter(isChatCapable);
+
+if (!chatOnly.length) {
+  setUiState('No chat-capable models available');
+  return;
+}
+const selected = chatOnly[Math.floor(Math.random() * chatOnly.length)];
+
+If you still show a “custom model” input, disable it or validate it against manifest.models before allowing “Load”.
+
+
+---
+
+3) Loader/worker: use supported pipelines only
+
+For chat/instruct models in transformers.js, the valid tasks are still:
+
+text-generation (GPT-like / chat-tuned base)
+
+text2text-generation (T5/FLAN-style)
+
+
+Make sure you didn’t switch to a non-existent pipeline:
+
+const task = model.task; // 'text-generation' | 'text2text-generation'
+const pipe = await pipeline(task as any, model.repo_id, { quantized: true });
+// and when generating:
+const out = await pipe(prompt, {
+  max_new_tokens: 160,
+  temperature: 0.7,
+  top_p: 0.95,
+  repetition_penalty: 1.15,
+  return_full_text: false,          // ✨ don’t echo the prompt
+  stop: ['\nUser:', '\nSystem:'],   // ✨ cut before role flips
+});
+
+
+---
+
+4) Keep the chat prompt, drop GPT-2
+
+You already added a system message. Keep the formatter that ends with Assistant: and pass recent turns (last 6–10) into generateText. Then remove GPT-2 and any base (non-chat) models from the manifest to avoid regressions.
+
+Minimal prompt builder reminder:
+
+function toChatPrompt(history) {
+  const sys = history.find(h => h.role === 'system')?.content
+    ?? 'You are a concise, helpful assistant.';
+  const lines = history
+    .filter(h => h.role !== 'system')
+    .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content.trim()}`);
+  return `System: ${sys}\n${lines.join('\n')}\nAssistant:`; // <- crucial
+}
+
+
+---
+
+5) Quick test (90 seconds)
+
+1. Click Get Random Model → should pick only from your allowlist.
+
+
+2. Network tab sequence: GET /api/manifest → POST /api/models/<id>/download → polling /status → a burst of GET /models/...
+
+
+3. Ask: “Hi! Who are you?”
+
+Expect a short first-person reply, not a reprint of the system prompt.
+
+
+
+4. Ask a follow-up referencing prior turn; it should stick to the persona.
+
+
+
+
+---
+
+TL;DR
+
+Yes—let’s stick to chat/instruct models only.
+
+Make the server an allowlist (manifest + download guard).
+
+Filter on the client by task (text-generation/text2text-generation) and disable custom entries.
+
+Use supported pipelines; keep your chat prompt that ends with Assistant: and set return_full_text: false.
+
+
+If you want, paste your current routes.ts (manifest + download route) and the “Get Random Model” handler, and I’ll give you a tiny, exact patch for your latest commit.
+

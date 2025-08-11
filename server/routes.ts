@@ -8,10 +8,14 @@ import { z } from "zod";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { modelDownloader } from "./modelDownloader";
 
-// Curated models known to work with transformers.js
+// ONLY instruction/chat-tuned models - strict chat-only policy
 const CURATED_MODELS: HFModel[] = [
-  { repo_id: "Xenova/tinyllama-1.1b-chat-v1.0", task: "text-generation", name: "TinyLlama 1.1B Chat" }
+  { repo_id: "Xenova/tinyllama-1.1b-chat-v1.0", task: "text-generation", name: "TinyLlama 1.1B Chat", description: "Instruction-tuned chat model", size: "~1.1GB" },
+  { repo_id: "Xenova/DialoGPT-medium", task: "text-generation", name: "DialoGPT Medium", description: "Conversational chat model", size: "~1.2GB" },
+  { repo_id: "Xenova/DialoGPT-small", task: "text-generation", name: "DialoGPT Small", description: "Lightweight conversational model", size: "~500MB" }
 ];
+
+const CHAT_MODEL_ALLOWLIST = new Set(CURATED_MODELS.map(m => m.repo_id));
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -128,7 +132,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/models/:modelId/download", async (req, res) => {
     try {
       const modelId = req.params.modelId;
-      console.log(`Starting download for model: ${modelId}`);
+      console.log(`Download request for model: ${modelId}`);
+      
+      // Enforce chat-only policy - reject non-allowlisted models
+      if (!CHAT_MODEL_ALLOWLIST.has(modelId)) {
+        console.log(`❌ Model ${modelId} rejected - not in chat-only allowlist`);
+        return res.status(403).json({ 
+          error: "Model not allowed (chat-only policy)",
+          allowedModels: Array.from(CHAT_MODEL_ALLOWLIST)
+        });
+      }
+      
+      console.log(`✅ Model ${modelId} approved for download`);
       
       // Check if model is already available
       if (await modelDownloader.isModelAvailable(modelId)) {
@@ -145,7 +160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({ 
         status: "downloading", 
-        message: "Model download started" 
+        message: `Download initiated for chat model ${modelId}` 
       });
     } catch (error) {
       console.error("Error starting model download:", error);

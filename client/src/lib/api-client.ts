@@ -1,7 +1,7 @@
 // Clean, simple API client for the new server architecture
 import { ChatRequest, ChatResponse, HealthResponse } from '@shared/api-types';
 
-// Use relative paths so Vite proxy handles the routing in dev
+// Point to the clean API server - use relative paths for Vite proxy
 const API_BASE = '';
 
 export async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {

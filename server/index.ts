@@ -1,71 +1,114 @@
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import fetch from 'node-fetch';
+import { z } from 'zod';
+import { setupVite, serveStatic } from './vite';
 
 const app = express();
+app.use(cors({ origin: true, credentials: false }));
 app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
 
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+const PORT = Number(process.env.PORT || 8787);
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
+// Health
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
+// Version endpoint for deploy verification
+app.get('/api/version', (_req, res) => res.json({ 
+  version: '1.0.0',
+  timestamp: new Date().toISOString(),
+  providers: ['openai', 'openrouter', 'hf', 'stub']
+}));
 
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
+// Simple chat endpoint with pluggable providers
+const ChatSchema = z.object({
+  messages: z.array(z.object({ role: z.enum(['system','user','assistant']), content: z.string() })),
+  provider: z.enum(['openai', 'openrouter', 'hf', 'stub']).default('stub'),
+  model: z.string().optional()
 });
 
-(async () => {
-  const server = await registerRoutes(app);
+app.post('/api/chat', async (req, res) => {
+  const parsed = ChatSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+  const { messages, provider, model } = parsed.data;
 
-    res.status(status).json({ message });
-    throw err;
-  });
+  try {
+    if (provider === 'stub') {
+      // Deterministic local echo for dev
+      const last = messages.filter(m => m.role === 'user').pop()?.content ?? '';
+      return res.json({ content: `Stub reply: ${last.slice(0, 120)}` });
+    }
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+    if (provider === 'openai') {
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: model || 'gpt-4o-mini',
+          messages
+        })
+      });
+      const json = await resp.json() as any;
+      return res.json({ content: json.choices?.[0]?.message?.content ?? '' });
+    }
+
+    if (provider === 'openrouter') {
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/jaredpilcher/MeshAI',
+          'X-Title': 'MeshAI'
+        },
+        body: JSON.stringify({
+          model: model || 'openai/gpt-4o-mini',
+          messages
+        })
+      });
+      const json = await resp.json() as any;
+      return res.json({ content: json.choices?.[0]?.message?.content ?? '' });
+    }
+
+    if (provider === 'hf') {
+      // Works with HF Inference API for small instruct models
+      const m = model || 'mistralai/Mistral-7B-Instruct-v0.2';
+      const resp = await fetch(`https://api-inference.huggingface.co/models/${m}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.HF_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ inputs: messages.map(m => `${m.role}: ${m.content}`).join('\n') })
+      });
+      const json = await resp.json() as any;
+      const text = Array.isArray(json) ? (json[0]?.generated_text ?? '') : (json.generated_text ?? JSON.stringify(json));
+      return res.json({ content: text });
+    }
+
+    return res.status(400).json({ error: 'Unknown provider' });
+  } catch (e: any) {
+    console.error(e);
+    return res.status(500).json({ error: e?.message ?? 'Server error' });
   }
+});
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
-  });
-})();
+// Setup Vite for frontend serving
+if (process.env.NODE_ENV === "development") {
+  await setupVite(app);
+} else {
+  serveStatic(app);
+}
+
+// Start clean API server with frontend
+app.listen(PORT, () => {
+  console.log(`🚀 Clean API server with frontend running on port ${PORT}`);
+  console.log(`Frontend: http://localhost:${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/api/health`);
+  console.log(`Version info: http://localhost:${PORT}/api/version`);
+});

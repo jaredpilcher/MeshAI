@@ -13,6 +13,13 @@ const PORT = Number(process.env.PORT || 8787);
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// Version endpoint for deploy verification
+app.get('/api/version', (_req, res) => res.json({ 
+  version: '1.0.0',
+  timestamp: new Date().toISOString(),
+  providers: ['openai', 'openrouter', 'hf', 'stub']
+}));
+
 // Simple chat endpoint with pluggable providers
 const ChatSchema = z.object({
   messages: z.array(z.object({ role: z.enum(['system','user','assistant']), content: z.string() })),
@@ -90,56 +97,12 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Model infrastructure will be integrated properly
-let objectStorageService: any = null;
-let ObjectNotFoundError: any = null;
+// Note: Object storage integration will be added when needed
+// For now, running clean API-only server
 
-// Try to import existing infrastructure if available
-try {
-  const modules = await import('../objectStorage.js');
-  objectStorageService = new modules.ObjectStorageService();
-  ObjectNotFoundError = modules.ObjectNotFoundError;
-} catch (e) {
-  console.log('Object storage not available, running basic server');
-}
-
-// Model serving routes - serve models from our storage to bypass network restrictions
-app.get("/models/*", async (req, res) => {
-  if (!objectStorageService) {
-    return res.status(503).json({ error: "Model serving not available" });
-  }
-  
-  try {
-    const fullPath = (req.params as any)[0];
-    console.log(`🔄 Serving model file: ${fullPath}`);
-    
-    const file = await objectStorageService.searchModelFile(`models/${fullPath}`);
-    if (!file) {
-      console.log(`❌ File not found: models/${fullPath}`);
-      return res.status(404).json({ error: "Model file not found" });
-    }
-    
-    console.log(`✅ Found file: ${file.name}`);
-    await objectStorageService.downloadFile(file, res);
-  } catch (error) {
-    console.error("❌ Error serving model file:", error);
-    if (ObjectNotFoundError && error instanceof ObjectNotFoundError) {
-      return res.status(404).json({ error: "Model file not found" });
-    }
-    return res.status(500).json({ error: "Internal server error" });
-  }
+// Start clean API server
+app.listen(PORT, () => {
+  console.log(`🚀 Clean API server running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/api/health`);
+  console.log(`Version info: http://localhost:${PORT}/api/version`);
 });
-
-// Import and register existing routes for backward compatibility
-try {
-  const { registerRoutes } = await import('../routes.js');
-  const httpServer = await registerRoutes(app);
-  if (httpServer.listening) {
-    console.log(`🚀 Server running on port ${PORT} with full infrastructure`);
-  } else {
-    httpServer.listen(PORT, () => console.log(`🚀 Server running on port ${PORT} with full infrastructure`));
-  }
-} catch (error) {
-  console.error('Failed to register existing routes, running basic server:', error);
-  app.listen(PORT, () => console.log(`🚀 Basic server running on port ${PORT}`));
-}

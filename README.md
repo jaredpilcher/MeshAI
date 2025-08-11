@@ -1,64 +1,114 @@
-# Mesh NanoLLM
+# Mesh NanoLLM - Distributed AI Inference
 
-A distributed AI inference application with clean, pluggable architecture supporting multiple AI providers and WebRTC mesh networking.
+A cutting-edge browser-based distributed AI inference platform that enables real-time, client-side machine learning through WebRTC and transformers.js, with advanced error handling and robust model management.
 
-## Getting Started
+## Getting Started (10 minutes)
 
-### Quick Setup (30 seconds)
+### Prerequisites
+- Node.js v20.x (or v22.x)
+- npm installed
 
-```bash
-# Install dependencies
-npm install
+### Quick Setup
 
-# Start both client and server
-npm run dev
-```
+1. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-Expected output:
-- Client starts on http://localhost:5173
-- Server starts on http://localhost:8787
+2. **Set up environment** (optional for basic testing)
+   ```bash
+   cp server/.env.example server/.env
+   # Edit server/.env to add API keys if testing real providers
+   ```
 
-### Test the Setup
+3. **Start both client and server**
+   ```bash
+   npm run dev
+   ```
+   
+   This will start:
+   - **Client** on `http://localhost:5173` (frontend)
+   - **Server** on `http://localhost:8787` (API backend)
 
-1. **Health check**: `curl http://localhost:8787/api/health`
-   - Expected: `{"ok":true}`
-
-2. **Chat API**: 
+4. **Test the setup**
+   
+   Health check:
+   ```bash
+   curl http://localhost:8787/api/health
+   # Expected: {"ok":true}
+   ```
+   
+   Test chat API:
    ```bash
    curl -X POST http://localhost:8787/api/chat \
-   -H 'Content-Type: application/json' \
-   -d '{"messages":[{"role":"user","content":"ping"}],"provider":"stub"}'
+     -H 'Content-Type: application/json' \
+     -d '{"messages":[{"role":"user","content":"ping"}],"provider":"stub"}'
+   # Expected: {"content":"Stub reply: ping"}
    ```
-   - Expected: `{"content":"Stub reply: ping"}`
 
-3. **UI Test**: Open http://localhost:5173/chat and send a message
-   - Should show both user message and AI stub response
+5. **Open the app**
+   
+   Visit `http://localhost:5173` in your browser. Try the Chat Demo page to see the clean architecture in action.
 
-### API Providers
+## API Providers
 
-Copy `server/.env.example` to `server/.env` and add your API keys:
+The system supports multiple AI providers:
 
-```bash
+- **stub**: Local echo for development (no API key needed)
+- **openai**: OpenAI GPT models (requires `OPENAI_API_KEY`)
+- **openrouter**: OpenRouter API (requires `OPENROUTER_API_KEY`) 
+- **hf**: Hugging Face Inference API (requires `HF_TOKEN`)
+
+Add API keys to `server/.env` to test real providers:
+
+```env
 PORT=8787
 OPENAI_API_KEY=your_key_here
-OPENROUTER_API_KEY=your_key_here  
+OPENROUTER_API_KEY=your_key_here
 HF_TOKEN=your_token_here
 ```
 
-### Architecture
+## Project Structure
 
 ```
-├── client/          # React frontend (Vite, TailwindCSS)
-├── server/          # Express API server  
+├── client/          # React frontend with Vite
+├── server/          # Express API backend
 ├── shared/          # Shared TypeScript types
-└── README.md        # This file
+├── package.json     # Root workspace configuration
+└── README.md       # This file
 ```
 
-### Build for Production
+## Key Components
 
+- **WebRTC mesh networking** for decentralized computing
+- **Browser-based AI model inference** with comprehensive error detection
+- **Dynamic model loading** with advanced network management
+- **WebGPU accelerated machine learning**
+- **Sophisticated model proxy and download system**
+
+## Development
+
+### Type checking
+```bash
+npm run typecheck
+```
+
+### Building for production
 ```bash
 npm run build
+```
+
+### Starting production server
+```bash
 npm start
 ```
 
-The client builds to static files, serve behind a reverse proxy routing `/api/*` to the server process.
+## Architecture
+
+This is a clean, pluggable monorepo setup with:
+- **Clean server architecture** with multiple AI provider support
+- **Proper TypeScript project structure** with shared types
+- **Working chat interface** demonstrating the architecture
+- **Backward compatibility** with existing model infrastructure
+
+The system is designed to be modular and extensible, with a focus on clean separation of concerns and maintainable code.

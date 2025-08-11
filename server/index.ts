@@ -98,6 +98,51 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Model manifest endpoint
+app.get('/api/manifest', async (_req, res) => {
+  console.log('Manifest request received');
+  
+  try {
+    // Return a curated list of lightweight models optimized for browser inference
+    const models = [
+      {
+        repo_id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        name: "TinyLlama 1.1B Chat",
+        task: "text-generation",
+        description: "Compact chat model perfect for browser inference",
+        size: "~2.2GB"
+      },
+      {
+        repo_id: "microsoft/DialoGPT-small",
+        name: "DialoGPT Small",
+        task: "text-generation", 
+        description: "Conversational model optimized for dialogue",
+        size: "~500MB"
+      },
+      {
+        repo_id: "Xenova/distilgpt2",
+        name: "DistilGPT2",
+        task: "text-generation",
+        description: "Lightweight GPT2 variant for fast inference", 
+        size: "~350MB"
+      },
+      {
+        repo_id: "Xenova/gpt2",
+        name: "GPT2",
+        task: "text-generation",
+        description: "Classic GPT2 model for text generation",
+        size: "~550MB"
+      }
+    ];
+    
+    console.log(`Returning manifest with ${models.length} models`);
+    res.json({ models });
+  } catch (e: any) {
+    console.error('Manifest error:', e);
+    res.status(500).json({ error: e?.message ?? 'Failed to load manifest' });
+  }
+});
+
 // Model download and status endpoints
 app.post('/api/models/:modelId/download', async (req, res) => {
   const { modelId } = req.params;
@@ -158,17 +203,25 @@ app.get('/models/*', async (req, res) => {
   }
 });
 
-// Start clean API server with frontend
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Clean API server with frontend running on port ${PORT}`);
-  console.log(`Frontend: http://localhost:${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/api/health`);
-  console.log(`Version info: http://localhost:${PORT}/api/version`);
-});
-
-// Setup Vite for frontend serving after server creation
+// Setup Vite for frontend serving BEFORE starting server
 if (process.env.NODE_ENV === "development") {
+  const server = await new Promise<any>((resolve) => {
+    const httpServer = app.listen(PORT, () => {
+      console.log(`🚀 Clean API server with frontend running on port ${PORT}`);
+      console.log(`Frontend: http://localhost:${PORT}`);
+      console.log(`Health check: http://localhost:${PORT}/api/health`);
+      console.log(`Version info: http://localhost:${PORT}/api/version`);
+      resolve(httpServer);
+    });
+  });
+  
   await setupVite(app, server);
 } else {
   serveStatic(app);
+  app.listen(PORT, () => {
+    console.log(`🚀 Clean API server with frontend running on port ${PORT}`);
+    console.log(`Frontend: http://localhost:${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/api/health`);
+    console.log(`Version info: http://localhost:${PORT}/api/version`);
+  });
 }

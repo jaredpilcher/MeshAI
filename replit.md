@@ -12,12 +12,20 @@ Mesh NanoLLM is a distributed AI inference application that enables browser-base
 - Maintained backward compatibility with existing model serving infrastructure
 
 **Bulletproof Monorepo Setup Completed (Latest)**
-- Built clean API-only server in `server/src/index.ts` running on port 8787
+- Built clean API-only server in `server/index.ts` running on port 5000 with Vite integration
 - All verification checklist items working: health check, version info, chat stub API
 - Added missing `.env.example` file for API key configuration
 - Created comprehensive README with quickstart instructions
-- Client configured to connect to clean server (port 8787) when on localhost
+- Client configured to use relative API paths for seamless integration
 - TypeScript project references properly configured for monorepo structure
+
+**Model Loading Workflow Fixed (January 11, 2025)**
+- Implemented complete model download/poll/load workflow as requested
+- Added missing `/api/manifest` endpoint with curated lightweight models
+- Added `/api/models/:id/download` and `/api/models/:id/status` endpoints
+- Fixed "Get Random Model" button with real-time progress feedback
+- Configured transformers.js for browser-based AI inference with server proxy
+- UI now shows clear status progression: Fetching → Preparing → Downloading → Loading → Ready
 
 # User Preferences
 

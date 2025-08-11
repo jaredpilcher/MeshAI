@@ -21,11 +21,12 @@ Mesh NanoLLM is a distributed AI inference application that enables browser-base
 
 **Model Loading Workflow Fixed (January 11, 2025)**
 - Implemented complete model download/poll/load workflow as requested
-- Added missing `/api/manifest` endpoint with curated lightweight models
+- Added missing `/api/manifest` endpoint with curated chat models
 - Added `/api/models/:id/download` and `/api/models/:id/status` endpoints
 - Fixed "Get Random Model" button with real-time progress feedback
 - Configured transformers.js for browser-based AI inference with server proxy
 - UI now shows clear status progression: Fetching → Preparing → Downloading → Loading → Ready
+- Updated model manifest to only include conversational/chat models for proper dialogue behavior
 
 # User Preferences
 

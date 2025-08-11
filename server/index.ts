@@ -103,35 +103,35 @@ app.get('/api/manifest', async (_req, res) => {
   console.log('Manifest request received');
   
   try {
-    // Return a curated list of lightweight models optimized for browser inference
+    // Return a curated list of chat models optimized for browser inference
     const models = [
       {
         repo_id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         name: "TinyLlama 1.1B Chat",
         task: "text-generation",
-        description: "Compact chat model perfect for browser inference",
+        description: "Compact chat model perfect for conversational AI",
         size: "~2.2GB"
       },
       {
         repo_id: "microsoft/DialoGPT-small",
         name: "DialoGPT Small",
         task: "text-generation", 
-        description: "Conversational model optimized for dialogue",
+        description: "Conversational model trained for dialogue responses",
         size: "~500MB"
       },
       {
-        repo_id: "Xenova/distilgpt2",
-        name: "DistilGPT2",
+        repo_id: "microsoft/DialoGPT-medium",
+        name: "DialoGPT Medium",
         task: "text-generation",
-        description: "Lightweight GPT2 variant for fast inference", 
-        size: "~350MB"
+        description: "Medium-sized conversational model for better responses", 
+        size: "~1.2GB"
       },
       {
-        repo_id: "Xenova/gpt2",
-        name: "GPT2",
+        repo_id: "Xenova/LaMini-T5-738M",
+        name: "LaMini T5 738M",
         task: "text-generation",
-        description: "Classic GPT2 model for text generation",
-        size: "~550MB"
+        description: "Instruction-following chat model based on T5",
+        size: "~740MB"
       }
     ];
     

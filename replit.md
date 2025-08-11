@@ -27,6 +27,8 @@ Mesh NanoLLM is a distributed AI inference application that enables browser-base
 - Configured transformers.js for browser-based AI inference with server proxy
 - UI now shows clear status progression: Fetching → Preparing → Downloading → Loading → Ready
 - Updated model manifest to only include conversational/chat models for proper dialogue behavior
+- Removed T5-based models due to transformers.js browser compatibility issues
+- All models now confirmed compatible with transformers.js text generation pipelines
 
 # User Preferences
 

@@ -103,7 +103,7 @@ app.get('/api/manifest', async (_req, res) => {
   console.log('Manifest request received');
   
   try {
-    // Return a curated list of chat models optimized for browser inference
+    // Return a curated list of chat models confirmed to work with transformers.js
     const models = [
       {
         repo_id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -127,11 +127,11 @@ app.get('/api/manifest', async (_req, res) => {
         size: "~1.2GB"
       },
       {
-        repo_id: "Xenova/LaMini-T5-738M",
-        name: "LaMini T5 738M",
+        repo_id: "Xenova/gpt2",
+        name: "GPT2 Chat",
         task: "text-generation",
-        description: "Instruction-following chat model based on T5",
-        size: "~740MB"
+        description: "Classic conversational model, reliable and fast",
+        size: "~550MB"
       }
     ];
     

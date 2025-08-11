@@ -1,0 +1,89 @@
+You’re super close. From your screenshot, the model is echoing your prompt (“System: You are a concise, helpful assistant…”) instead of giving a reply. That happens when:
+
+1. the pipeline returns the full text (prompt + continuation) and you stream it as-is, or
+
+
+2. the prompt doesn’t end with a clear “Assistant:” cue + stops, so GPT-2/DistilGPT-2 just continues anywhere.
+
+
+
+Here’s the exact, minimal fix.
+
+
+---
+
+What to change (drop-in)
+
+A) Generation call — don’t return the prompt
+
+Use transformers.js with return_full_text: false (supported) and/or a streamer that skips the prompt. 
+
+import { pipeline, TextStreamer } from '@xenova/transformers';
+
+const generator = await pipeline('text-generation', modelId, { quantized: true });
+
+// Chat prompt (see B)
+const prompt = buildChatPrompt(history); // ends with 'Assistant:'
+
+const streamer = new TextStreamer(generator.tokenizer, {
+  skip_prompt: true,
+  skip_special_tokens: true,
+});
+
+const out = await generator(prompt, {
+  max_new_tokens: 160,
+  temperature: 0.7,
+  top_p: 0.95,
+  repetition_penalty: 1.15,
+  // key bits ↓
+  return_full_text: false,         // only new tokens
+  streamer,                        // stream tokens without prompt
+  stop: ['\nUser:', '\nSystem:'],  // cut before role flips
+});
+
+If you’re not using a streamer, still set return_full_text: false. If you must support older versions, manually slice:
+
+const res = await generator(prompt, opts);
+let text = res[0]?.generated_text ?? '';
+if (text.startsWith(prompt)) text = text.slice(prompt.length);
+
+B) Prompt template — make it chatty
+
+End with Assistant: so causal LMs continue as the assistant:
+
+function buildChatPrompt(history) {
+  const sys = (history.find(h => h.role === 'system')?.content ?? 
+              'You are a concise, helpful assistant.').trim();
+
+  const lines = history
+    .filter(h => h.role !== 'system')
+    .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content.trim()}`);
+
+  return `System: ${sys}\n${lines.join('\n')}\nAssistant:`; // <- crucial
+}
+
+That combination (Assistant: + stop sequences + no prompt echo) turns GPT-2/DialoGPT into a decent chat shape. 
+
+
+---
+
+Quick sanity checklist
+
+Your pipeline task is 'text-generation' (don’t use 'conversational'—not a transformers.js task). 
+
+You pass recent message history (last 6–10 turns), not only the last user text.
+
+You see no “System: …” text in the streamed tokens anymore.
+
+If it still rambles: lower temperature to 0.6–0.7 and keep repetition_penalty ≥ 1.12.
+
+
+
+---
+
+Bonus: prefer chat-tuned small models when available
+
+DialoGPT and TinyLlama-chat will feel more natural than raw GPT-2, but the adapter above will still make GPT-2 usable. (Transformers.js examples and task names here.) 
+
+If you paste your current generateText call and the prompt you send into the worker, I’ll tailor a 5-line patch against your latest commit.
+

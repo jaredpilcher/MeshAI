@@ -103,7 +103,12 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
       console.log('Chat turns formatted:', chatTurns);
       
       // Use the new generateChat method with proper formatting
-      const response = await worker.generateChat(chatTurns, params);
+      const response = await worker.generateChat(chatTurns, {
+        max_new_tokens: params.max_new_tokens ?? 160,
+        temperature: params.temperature ?? 0.7, // Lower for more focused responses
+        repetition_penalty: params.repetition_penalty ?? 1.15, // Higher to prevent loops
+        ...params
+      });
       console.log('Chat-formatted AI response:', response);
       
       if (!response || response.trim() === '') {

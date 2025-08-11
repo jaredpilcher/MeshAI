@@ -1,12 +1,28 @@
 # Overview
 
-Mesh NanoLLM is a distributed AI inference application that enables browser-based machine learning using transformers.js with WebRTC mesh networking for peer-to-peer computation. The system allows users to run AI models locally in their browser with WebGPU acceleration (fallback to WASM/CPU) and participate in a distributed mesh network where peers can share computational tasks. Users can either run inference locally or broadcast jobs to the mesh network for collaborative processing.
+Mesh NanoLLM is a distributed AI inference application that enables browser-based machine learning using transformers.js with WebRTC mesh networking for peer-to-peer computation. The system features a clean architectural foundation with multiple AI provider support and robust model serving capabilities.
+
+# Recent Changes (January 11, 2025)
+
+**Complete Architectural Overhaul Implemented**
+- Created clean, pluggable API server with multiple AI provider support (OpenAI, OpenRouter, Hugging Face, local stub)
+- Implemented proper TypeScript project structure with shared types and references
+- Added basic chat interface demonstrating the new architecture
+- Fixed server TypeScript issues and improved error handling
+- Maintained backward compatibility with existing model serving infrastructure
 
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
+Architecture preference: Clean, minimal, pluggable design with proper separation of concerns.
 
 # System Architecture
+
+## Clean Server Architecture (New)
+- **Core Server**: Minimal Express.js server on port 8787 with CORS and proper error handling
+- **Pluggable AI Providers**: Support for OpenAI, OpenRouter, Hugging Face, and local stub responses
+- **API Design**: RESTful endpoints (`/api/chat`, `/api/health`) with Zod validation
+- **Model Serving**: Enhanced model proxy system for browser-based AI with proper fallbacks
 
 ## Frontend Architecture
 - **Framework**: React with TypeScript using Vite as the build tool
@@ -22,6 +38,12 @@ Preferred communication style: Simple, everyday language.
 - **WebRTC Coordination**: Acts as signaling server for browser-to-browser mesh networking
 - **API Design**: RESTful endpoints for model manifests, health checks, and mesh session management
 - **Development Setup**: Hot reload with Vite integration in development mode
+
+## TypeScript Architecture
+- **Shared Types**: Centralized API types in `shared/api-types.ts` with proper project references
+- **Client Types**: Comprehensive TypeScript configuration with path aliases
+- **Server Types**: Strict typing with Zod validation for API endpoints
+- **Project Structure**: Proper monorepo-style organization with client/server/shared separation
 
 ## Data Storage Solutions
 - **Database**: PostgreSQL with Drizzle ORM for type-safe database operations

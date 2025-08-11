@@ -80,58 +80,73 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
     }
   }, [worker, onLog]);
 
-  const generateText = useCallback(async (prompt: string, params: any, messageId: string) => {
+  // New chat-aware generation method that handles message history
+  const generateChat = useCallback(async (messages: any[], params: any, messageId: string) => {
     if (!worker || !currentModel) {
       onLog?.('error', 'No model loaded');
       return;
     }
 
     setIsGenerating(true);
-    onLog?.('info', `Starting generation for ${params.max_new_tokens || 128} tokens`);
-    console.log('Generating text with:', { prompt, messageId, currentModel });
+    onLog?.('info', `Starting chat generation for ${params.max_new_tokens || 160} tokens`);
+    console.log('Generating chat with messages:', messages.length, 'messages');
 
     try {
-      // Use real transformers.js for actual AI inference
-      console.log('Starting real AI inference with transformers.js');
-      console.log('Prompt:', prompt);
+      // Map to the expected format and take last conversation turns for context
+      const chatTurns = messages
+        .slice(-10) // Last 10 turns for context
+        .map(m => ({
+          role: (m.source === 'user' ? 'user' : m.source === 'system' ? 'system' : 'assistant') as 'user'|'system'|'assistant',
+          content: m.content
+        }));
+
+      console.log('Chat turns formatted:', chatTurns);
       
-      // Generate text using the real model
-      const response = await worker.generateText(prompt, params);
-      console.log('Real AI generated response:', response);
+      // Use the new generateChat method with proper formatting
+      const response = await worker.generateChat(chatTurns, params);
+      console.log('Chat-formatted AI response:', response);
       
       if (!response || response.trim() === '') {
         onLog?.('error', 'Model generated empty response');
-        onToken?.('Sorry, the model generated an empty response. Please try again.', messageId);
+        onToken?.('Sorry, I couldn\'t generate a response. Try a different message.', messageId);
         onGenerationComplete?.(messageId);
         return;
       }
       
-      // Stream the response token by token to simulate real-time generation
-      const tokens = response.split(' ');
-      console.log('Streaming real AI tokens:', tokens);
+      // Stream the response word by word for better UX
+      const words = response.trim().split(/(\s+)/);
+      console.log('Streaming chat response:', words.length, 'words');
       
-      for (let i = 0; i < tokens.length; i++) {
-        const token = i === 0 ? tokens[i] : ' ' + tokens[i];
-        console.log('Emitting token:', token);
-        onToken?.(token, messageId);
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        if (!word) continue;
         
-        // Realistic token streaming delay for browser inference
-        await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 50));
+        console.log('Emitting word:', word);
+        onToken?.(word, messageId);
+        
+        // Slower streaming for chat responses
+        await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 25));
       }
       
       onGenerationComplete?.(messageId);
-      onLog?.('info', `Real AI generation completed: ${tokens.length} tokens`);
+      onLog?.('info', `Chat generation completed: ${words.length} words`);
     } catch (error: any) {
-      console.error('AI inference error:', error);
+      console.error('Chat generation error:', error);
       
-      // Real AI inference failed
-      onLog?.('error', `AI inference failed: ${error.message || String(error)}`);
-      onToken?.('Error: AI inference failed. Please try again or reload the model.', messageId);
+      onLog?.('error', `Chat generation failed: ${error.message || String(error)}`);
+      onToken?.('Error: Chat generation failed. Please try again or reload the model.', messageId);
       onGenerationComplete?.(messageId);
     } finally {
       setIsGenerating(false);
     }
   }, [worker, currentModel, onLog, onToken, onGenerationComplete]);
+
+  // Legacy generateText method for backwards compatibility
+  const generateText = useCallback(async (prompt: string, params: any, messageId: string) => {
+    // Convert simple prompt to message format and use chat generation
+    const messages = [{ source: 'user', content: prompt, id: 'temp', isStreaming: false }];
+    return generateChat(messages, params, messageId);
+  }, [generateChat]);
 
   return {
     currentModel,
@@ -139,6 +154,7 @@ export function useTransformers({ onLog, onToken, onGenerationComplete }: UseTra
     modelStatus,
     isGenerating,
     loadModel,
-    generateText
+    generateText,
+    generateChat
   };
 }

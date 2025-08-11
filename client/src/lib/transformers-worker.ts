@@ -153,16 +153,21 @@ export class TransformersWorker {
     throw new Error(`Model download timeout after ${maxWaitTime / 1000}s`);
   }
 
-  // Chat adapter - formats messages into prompt for causal LMs
-  toChatPrompt(messages: {role: 'user'|'assistant'|'system', content: string}[]): string {
-    const sys = messages.find(h => h.role === 'system')?.content?.trim();
-    const turns = messages
-      .filter(h => h.role !== 'system')
-      .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content.trim()}`)
-      .join('\n');
+  // Enhanced chat adapter using dedicated chat formatter
+  formatChatPrompt(messages: {role: 'user'|'assistant'|'system', content: string}[]): string {
+    // Chat formatter for causal models (GPT-2, DialoGPT, etc)
+    const sys = messages.find(h => h.role === 'system')?.content?.trim()
+      ?? 'You are a concise, helpful assistant. Answer as a chat assistant.';
 
-    const prefix = sys ? `System: ${sys}\n` : '';
-    return `${prefix}${turns}\nAssistant:`;
+    const lines = messages
+      .filter(h => h.role !== 'system')
+      .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content.trim()}`);
+
+    return [
+      `System: ${sys}`,
+      lines.join('\n'),
+      'Assistant:' // Model will complete after this tag
+    ].join('\n');
   }
 
   async generateText(prompt: string, options: any = {}): Promise<string> {
@@ -171,17 +176,39 @@ export class TransformersWorker {
     }
 
     try {
-      console.log('Generating text with real AI model...');
+      console.log('Generating text with chat-optimized parameters...');
       
-      const result = await this.generator(prompt, {
-        max_new_tokens: options.max_new_tokens || 128,
-        temperature: options.temperature || 0.8,
+      // Sensible defaults for chatty behavior
+      const genOpts = {
+        max_new_tokens: options.max_new_tokens ?? 160,
+        temperature: options.temperature ?? 0.8,
+        top_p: options.top_p ?? 0.95,
+        top_k: options.top_k ?? 50,
         do_sample: true,
+        repetition_penalty: options.repetition_penalty ?? 1.12,
+        // Note: transformers.js doesn't support stop sequences yet, but we'll post-process
         ...options
-      });
-
-      const generatedText = (result as any)[0]?.generated_text || '';
-      console.log('AI generation completed:', generatedText.length, 'characters');
+      };
+      
+      const result = await this.generator(prompt, genOpts);
+      let generatedText = (result as any)[0]?.generated_text || '';
+      
+      // Post-process to remove unwanted continuations
+      const stopSequences = ['\nUser:', '\nSystem:', '\nHuman:'];
+      for (const stop of stopSequences) {
+        const stopIndex = generatedText.indexOf(stop);
+        if (stopIndex !== -1) {
+          generatedText = generatedText.substring(0, stopIndex);
+        }
+      }
+      
+      // Extract only the assistant's response (everything after "Assistant:")
+      const assistantStart = generatedText.lastIndexOf('Assistant:');
+      if (assistantStart !== -1) {
+        generatedText = generatedText.substring(assistantStart + 'Assistant:'.length).trim();
+      }
+      
+      console.log('Chat generation completed:', generatedText.length, 'characters');
       
       return generatedText;
       
@@ -192,8 +219,9 @@ export class TransformersWorker {
   }
 
   async generateChat(messages: {role: 'user'|'assistant'|'system', content: string}[], options: any = {}): Promise<string> {
-    const prompt = this.toChatPrompt(messages);
-    console.log('Chat prompt formatted:', prompt);
+    const prompt = this.formatChatPrompt(messages);
+    console.log('Chat prompt formatted for', this.currentModel?.name || 'unknown model');
+    console.log('Prompt preview:', prompt.substring(0, 200) + '...');
     return this.generateText(prompt, options);
   }
 

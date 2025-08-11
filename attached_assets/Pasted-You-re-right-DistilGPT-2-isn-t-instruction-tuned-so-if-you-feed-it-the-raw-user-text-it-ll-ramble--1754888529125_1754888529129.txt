@@ -1,0 +1,183 @@
+You’re right—DistilGPT-2 isn’t instruction-tuned, so if you feed it the raw user text it’ll “ramble” like an LM writing a sentence, not like a chat agent. The fix is to wrap the history into a chat-style prompt before generation and to set sane generation params (temperature, repetition penalty, stop conditions). Do that and even GPT-2/DialoGPT will behave much more “chatty.”
+
+I can’t pull your latest commits from here right now, but based on your screenshot (DistilGPT-2, text-generation, WebGPU “Ready”) the symptom matches exactly that missing “chat adapter.” Here’s a tight patch you can drop in.
+
+
+---
+
+1) Add a simple chat formatter (works for GPT-2, DialoGPT, TinyLlama chat)
+
+Create client/src/lib/chat-format.ts:
+
+export type ChatTurn = { role: 'system' | 'user' | 'assistant'; content: string };
+
+export function toChatPrompt(history: ChatTurn[], kind: 'causal' | 't2t' = 'causal') {
+  // System message helps steer GPT-2-style models
+  const sys = history.find(h => h.role === 'system')?.content?.trim()
+    ?? 'You are a concise, helpful assistant. Answer as a chat assistant.';
+
+  // Flatten conversation
+  const lines = history
+    .filter(h => h.role !== 'system')
+    .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content.trim()}`);
+
+  // Two styles: causal LM (GPT-2/DialoGPT/TinyLlama-chat) vs text2text (T5/FLAN)
+  if (kind === 't2t') {
+    return [
+      `System: ${sys}`,
+      lines.join('\n'),
+      'Assistant:'
+    ].join('\n');
+  }
+
+  // causal default
+  return [
+    `System: ${sys}`,
+    lines.join('\n'),
+    'Assistant:' // very important: model will complete after this tag
+  ].join('\n');
+}
+
+// Good default stops for causal chat
+export const CHAT_STOPS = ['\nUser:', '\nSystem:'];
+
+
+---
+
+2) Use it in your generation path
+
+In client/src/hooks/use-transformers.ts, before you call the pipeline, build a chat prompt and pass better generation options.
+
+import { toChatPrompt, CHAT_STOPS } from '@/lib/chat-format';
+import type { ChatMessage } from '@shared/schema';
+
+// Map your UI messages to ChatTurn
+function mapMessages(messages: ChatMessage[]) {
+  return messages.map(m => ({
+    role: (m.source === 'user' ? 'user' : m.source === 'system' ? 'system' : 'assistant') as 'user'|'system'|'assistant',
+    content: m.content
+  }));
+}
+
+const EOS_GPT2 = 50256; // helps some GPT-2 variants end cleanly
+
+// Replace your generateText implementation body with:
+const generateText = useCallback(async (promptOrMessages: string | ChatMessage[], params: any, messageId: string) => {
+  if (!worker || !currentModel) {
+    onLog?.('error', 'No model loaded');
+    return;
+  }
+
+  setIsGenerating(true);
+
+  try {
+    // If we have structured messages, format them, else treat the string as the user’s last turn.
+    const chatTurns = Array.isArray(promptOrMessages)
+      ? mapMessages(promptOrMessages)
+      : [{ role: 'user', content: String(promptOrMessages) }];
+
+    const kind = currentModel.task === 'text2text-generation' ? 't2t' : 'causal';
+    const chatPrompt = toChatPrompt(chatTurns as any, kind);
+
+    // Sensible defaults for chatty behavior
+    const genOpts = {
+      max_new_tokens: params?.max_new_tokens ?? 160,
+      temperature: params?.temperature ?? 0.8,
+      top_p: params?.top_p ?? 0.95,
+      top_k: params?.top_k ?? 50,
+      do_sample: true,
+      repetition_penalty: params?.repetition_penalty ?? 1.12,
+      stop: CHAT_STOPS,
+      eos_token_id: EOS_GPT2, // safe to include; ignored if not applicable
+    };
+
+    // Stream tokens manually if your worker supports it; otherwise call once and stream words.
+    const text = await worker.generateText(chatPrompt, genOpts);
+    if (!text?.trim()) {
+      onToken?.('Sorry, I couldn’t produce a reply. Try again.', messageId);
+      onGenerationComplete?.(messageId);
+      return;
+    }
+
+    // Stream in small chunks to feel real-time
+    for (const chunk of text.split(/(\s+)/)) {
+      if (!chunk) continue;
+      onToken?.(chunk, messageId);
+      await new Promise(r => setTimeout(r, 25)); // small delay for UX
+    }
+    onGenerationComplete?.(messageId);
+  } catch (err: any) {
+    onLog?.('error', `Generation failed: ${err?.message || err}`);
+    onToken?.('Error: generation failed. Try a shorter prompt or reload the model.', messageId);
+    onGenerationComplete?.(messageId);
+  } finally {
+    setIsGenerating(false);
+  }
+}, [worker, currentModel, onLog, onToken, onGenerationComplete]);
+
+> If your generateText implementation already supports streaming callbacks from transformers.js, replace the “split and stream” block with your actual streaming loop, but keep the same prompt and options.
+
+
+
+
+---
+
+3) Feed message history instead of just the last turn
+
+Where you call generateText from the chat UI, pass the conversation slice, not only the last message. For example in home.tsx (or your chat page):
+
+// When user hits send:
+const messageId = addMessage('', 'local', currentModel.name);
+const historySlice = takeLastConversation(messages, 10); // last 10 turns for brevity
+await generateText(historySlice, { /* optional overrides */ }, messageId);
+
+// helper: keep alternating user/assistant pairs and optional system
+function takeLastConversation(all: ChatMessage[], turns = 10) {
+  const system = all.find(m => m.source === 'system');
+  const rest = all.filter(m => m.source !== 'system');
+  const tail = rest.slice(-turns);
+  return (system ? [system, ...tail] : tail);
+}
+
+
+---
+
+4) Tweak for even more “assistant-like” tone
+
+Add a static system message the first time the session starts:
+
+> “You are a concise, factual assistant. Respond directly to the user’s last question. If the user greets you, greet them briefly.”
+
+
+
+Lower temperature if it still rambles: temperature: 0.6 and bump repetition_penalty: 1.18.
+
+Add an ending stop on the user tag only ('\nUser:'), not on 'Assistant:', so the model finishes its thought after “Assistant:”.
+
+
+
+---
+
+5) Prefer chat-tuned small models when available
+
+DialoGPT or TinyLlama-chat will give better conversational shape than raw GPT-2. Keep your “chat-only” filter to task ∈ { 'text-generation', 'text2text-generation' }, then prioritize repos with -chat, -Instruct, or DialoGPT in name when randomly picking.
+
+
+---
+
+Quick test checklist
+
+Type: “Hi! Who are you?”
+Expect: a short, first-person reply (“I’m a helpful assistant…”).
+
+Ask a follow-up that references prior turn (“And where do you run?”).
+Expect: a coherent continuation that references the previous Q.
+
+Watch for “User:” appearing in the model’s output. If it does, keep the stop: ['\nUser:'] we set—it’ll cut output before the model flips roles.
+
+
+
+---
+
+If you paste your current generateText function and the code that calls it, I’ll adapt the patch to your exact structure. But implementing the chat formatter + stop sequences + saner sampling above is what flips GPT-2/DialoGPT from “LM sentence” to “chat assistant.”
+

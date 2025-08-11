@@ -26,6 +26,7 @@ export default function Home() {
     modelStatus,
     loadModel,
     generateText,
+    generateChat,
     isGenerating
   } = useTransformers({
     onLog: addLog,
@@ -94,8 +95,13 @@ export default function Home() {
       return;
     }
 
+    // Use chat-aware generation with full message history
     const messageId = addMessage('', 'local', currentModel.name);
-    await generateText(prompt, params, messageId);
+    addLog('info', `Starting chat generation with ${messages.length + 1} message history`);
+    
+    // Take last 10 messages for context, including the new user message
+    const allMessages = [...messages, { id: 'temp', content: prompt, source: 'user' as const, timestamp: new Date(), isStreaming: false }];
+    await generateChat(allMessages, params, messageId);
   };
 
   const handleMeshInference = async (prompt: string, params: any) => {

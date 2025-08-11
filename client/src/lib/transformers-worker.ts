@@ -7,10 +7,12 @@ import {
   type TextGenerationPipeline
 } from '@huggingface/transformers';
 
-// Configure transformers.js for direct HuggingFace loading (more reliable)
+// Configure transformers.js for direct HuggingFace loading ONLY (no local server proxy)
 env.allowRemoteModels = true;
-env.allowLocalModels = true;
+env.allowLocalModels = false;  // Disable local to prevent server proxy routing
 env.useBrowserCache = true;
+// Ensure no local model path is set
+delete (env as any).localModelPath;
 
 // Server-proxy transformers.js implementation for browser-based AI inference
 export class TransformersWorker {
@@ -30,24 +32,29 @@ export class TransformersWorker {
     this.isLoading = true;
 
     try {
-      console.log(`🔄 Loading model through server proxy: ${model.repo_id}`);
+      console.log(`🔄 Loading model directly from HuggingFace: ${model.repo_id}`);
       
       // Step 1: Verify model is in allowlist (but load directly from HF)
       await this.verifyModelAllowed(model.repo_id);
       
-      // Step 3: Load model from our server
-      console.log('Creating pipeline from server-hosted model...');
+      // Step 2: Load model directly from HuggingFace (no server proxy)
+      console.log('Creating pipeline from HuggingFace directly...');
       
-      // Configure transformers.js for direct loading from HuggingFace
-      console.log('Configuring transformers.js for direct HF loading');
+      // Force direct HuggingFace loading (no server proxy)
+      console.log('Forcing direct HuggingFace loading - bypassing server proxy');
       env.allowRemoteModels = true;   // Allow direct loading from HuggingFace
-      env.allowLocalModels = true;
+      env.allowLocalModels = false;   // Disable local to prevent proxy routing
       env.useBrowserCache = true;
+      // Remove any local model path to prevent server routing
+      delete (env as any).localModelPath;
+      delete (env as any).remoteHost;
+      delete (env as any).remotePathTemplate;
       
-      console.log('Environment configured for direct HF loading:', {
+      console.log('Environment configured for direct HF loading only:', {
         allowRemoteModels: env.allowRemoteModels,
         allowLocalModels: env.allowLocalModels,
-        useBrowserCache: env.useBrowserCache
+        useBrowserCache: env.useBrowserCache,
+        localModelPath: (env as any).localModelPath || 'undefined'
       });
       
       // Use the model's actual task (should be 'text-generation' or 'text2text-generation')
